@@ -1,0 +1,13 @@
+# R session files
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+
+# Rendered output
+*.html
+*_files/
+
+# OS files
+.DS_Store
+Thumbs.db
