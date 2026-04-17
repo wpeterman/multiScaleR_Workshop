@@ -25,8 +25,8 @@ execute:
 
 Welcome to the `multiScaleR` workshop! In this hands-on tutorial, you will learn how to use the `multiScaleR` R package to identify the spatial scale at which environmental variables influence species' distributions and abundance. We will work with real camera trap data from the Cleveland Metroparks (Moll et al. 2019, *Ecography*) and analyze three mammal species that illustrate contrasting patterns:
 
-1.  **Eastern chipmunk**: a clean, small-scale negative response to urbanization
-2.  **Domestic cat**: a boundary case that teaches us about diagnostic interpretation
+1.  **Domestic cat**: a small-scale positive response to urbanization
+2.  **Eastern chipmunk**: a boundary case that teaches us about diagnostic interpretation
 3.  **White-tailed deer**: a landscape-scale positive response to urbanization
 
 By the end of this workshop you will be able to:
@@ -64,8 +64,8 @@ library(ggplot2)
 library(dplyr)
 
 # Verify multiScaleR version
-if (packageVersion("multiScaleR") < "0.6.4") {
-  warning("multiScaleR >= 0.6.4 is recommended. Update with remotes::install_github('wpeterman/multiScaleR')")
+if (packageVersion("multiScaleR") < "0.6.11") {
+  warning("multiScaleR >= 0.6.11 is required for this tutorial. Update with remotes::install_github('wpeterman/multiScaleR')")
 }
 
 # Set file paths -- UPDATE THESE to match your local directory
@@ -75,19 +75,18 @@ PRECOMP_DIR <- "precomputed"
 
 ## Workshop Roadmap
 
-| Section | Topic | Time |
-|---------|-------|------|
-| 1 | Setup and prerequisites | 15 min |
-| 2 | What is a scale of effect? | 20 min |
-| 3 | Data loading and exploration | 25 min |
-| 4 | Eastern chipmunk: full workflow | 40 min |
-| 5 | Domestic cat: a boundary case | 25 min |
-| -- | Break | 15 min |
-| 6 | White-tailed deer: landscape scale | 30 min |
-| 7 | Beyond the PCA: development and forest | 35 min |
-| 8 | Spatial prediction | 25 min |
-| 9 | Summary and next steps | 10 min |
-
+| Section | Topic                                  | Time   |
+|---------|----------------------------------------|--------|
+| 1       | Setup and prerequisites                | 15 min |
+| 2       | What is a scale of effect?             | 20 min |
+| 3       | Data loading and exploration           | 25 min |
+| 4       | Domestic cat: full workflow            | 40 min |
+| 5       | Eastern chipmunk: a boundary case      | 25 min |
+| --      | Break                                  | 15 min |
+| 6       | White-tailed deer: landscape scale     | 30 min |
+| 7       | Beyond the PCA: development and forest | 35 min |
+| 8       | Spatial prediction                     | 25 min |
+| 9       | Summary and next steps                 | 10 min |
 
 # What Is a Scale of Effect? {#sec-concepts}
 
@@ -125,14 +124,13 @@ plot_kernel(sigma = 2000, kernel = "gaussian", main = "sigma = 2000 m")
 Moll et al. (2019) used hierarchical Bayesian multi-species models (JAGS) to jointly estimate scales of effect across 14 mammal species. In this workshop, we use `multiScaleR` to fit frequentist single-species negative binomial GLMs. The core concept (Gaussian kernel smoothing of landscape covariates) is the same, but our estimates will differ because we are fitting independent models for each species and using maximum likelihood rather than MCMC. The general patterns should be consistent.
 :::
 
-
 # Data Loading and Exploration {#sec-data}
 
 ## Study System
 
 Moll et al. (2019) surveyed the mammal community of the Cleveland Metroparks, an extensive urban park system in Cleveland, Ohio, USA. They deployed 207 camera traps across 18 reservations distributed along an urban-to-rural gradient. Cameras recorded approximately 60,000 wildlife detections of 14 mammal species across winter (December 2015 to April 2016) and summer (June to September 2016) seasons.
 
-To quantify urbanization, Moll et al. conducted a principal components analysis (PCA) on three raster layers derived from the 2016 National Land Cover Database: (1) a binary developed/non-developed layer, (2) a binary forested/non-forested layer, and (3) proportion impervious surface. The first principal component explained ~61% of the variance and serves as a composite urbanization covariate. Higher values indicate more developed, less forested areas.
+To quantify urbanization, Moll et al. conducted a principal components analysis (PCA) on three raster layers derived from the 2016 National Land Cover Database: (1) a binary developed/non-developed layer, (2) a binary forested/non-forested layer, and (3) proportion impervious surface. The first principal component explained \~61% of the variance and serves as a composite urbanization covariate. Higher values indicate more developed, less forested areas.
 
 ## Load Camera Locations
 
@@ -183,15 +181,24 @@ deer_counts     <- rowSums(summer[, , 4], na.rm = TRUE)
 
 # Quick summary
 data.frame(
-  Species = c("E. chipmunk", "Dom. cat", "Deer"),
-  Total = c(sum(chipmunk_counts), sum(cat_counts), sum(deer_counts)),
-  Mean = round(c(mean(chipmunk_counts), mean(cat_counts), mean(deer_counts)), 2),
-  Sites_detected = c(sum(chipmunk_counts > 0), sum(cat_counts > 0), sum(deer_counts > 0)),
-  Sites_zero = c(sum(chipmunk_counts == 0), sum(cat_counts == 0), sum(deer_counts == 0))
+  Species = c("Dom. cat", "E. chipmunk", "Deer"),
+  Total = c(sum(cat_counts), sum(chipmunk_counts), sum(deer_counts)),
+  Mean = round(c(mean(cat_counts), mean(chipmunk_counts), mean(deer_counts)), 2),
+  Sites_detected = c(sum(cat_counts > 0), sum(chipmunk_counts > 0), sum(deer_counts > 0)),
+  Sites_zero = c(sum(cat_counts == 0), sum(chipmunk_counts == 0), sum(deer_counts == 0))
 )
 ```
 
-::: {.panel-tabset}
+::: panel-tabset
+### Domestic cat
+
+```{r}
+#| label: fig-hist-cat
+#| fig-cap: "Distribution of domestic cat summer counts across 207 camera sites."
+
+hist(cat_counts, breaks = 30, main = "Domestic cat",
+     xlab = "Total summer detections", col = "darkorange")
+```
 
 ### Eastern chipmunk
 
@@ -203,16 +210,6 @@ hist(chipmunk_counts, breaks = 30, main = "Eastern chipmunk",
      xlab = "Total summer detections", col = "steelblue")
 ```
 
-### Domestic cat
-
-```{r}
-#| label: fig-hist-cat
-#| fig-cap: "Distribution of domestic cat summer counts across 207 camera sites."
-
-hist(cat_counts, breaks = 30, main = "Domestic cat",
-     xlab = "Total summer detections", col = "darkorange")
-```
-
 ### White-tailed deer
 
 ```{r}
@@ -222,7 +219,6 @@ hist(cat_counts, breaks = 30, main = "Domestic cat",
 hist(deer_counts, breaks = 30, main = "White-tailed deer",
      xlab = "Total summer detections", col = "darkgreen")
 ```
-
 :::
 
 ::: callout-tip
@@ -259,41 +255,42 @@ cam_sf <- st_transform(cam_sf, crs(urb_pca))
 #| fig-cap: "PCA urbanization raster for the Cleveland Metroparks study area. Red/warm colors indicate high urbanization; blue/cool colors indicate low urbanization (more forested). Points show camera trap locations."
 
 plot(urb_pca, main = "PCA Urbanization")
-points(vect(cam_sf), cex = 0.5, pch = 16)
+points(vect(cam_sf), cex = 0.5, pch = 16, col = 'red')
 ```
 
+# Domestic Cat: The Full Workflow {#sec-cat}
 
-# Eastern Chipmunk: The Full Workflow {#sec-chipmunk}
+![Domestic cat in a suburban landscape.](images/cat.jpg){width="60%" fig-align="center"}
 
-Eastern chipmunks are small-bodied, forest-associated rodents. Based on their ecology, we might expect them to respond to urbanization at a relatively local scale. Moll et al. (2019) estimated a large scale of effect for summer site visit frequency (scale~max~ = 6514 m), which they attributed to indirect landscape-level predation effects. Let's see what our single-species analysis reveals.
+Domestic cats are strongly associated with residential areas, and their abundance in natural areas is closely tied to the proximity and density of surrounding human development. Based on their ecology, we expect cats to respond to urbanization at a relatively local scale. Let's see what our single-species analysis reveals.
 
 ## Step 1: Prepare Kernel Inputs
 
 The first step in any `multiScaleR` analysis is `kernel_prep()`. This function extracts raster values within a specified buffer radius (`max_D`) around each sample point, computes distances, and sets up the data structures needed for optimization.
 
 ```{r}
-#| label: chipmunk-kernel-prep
+#| label: cat-kernel-prep
 
-kernel_inputs_chip <- kernel_prep(
+kernel_inputs_cat <- kernel_prep(
   pts = cam_sf,
   raster_stack = urb_pca,
-  max_D = 1700,
+  max_D = 1000,
   kernel = "gaussian",
-  progress = TRUE
+  progress = FALSE
 )
 ```
 
 ::: callout-tip
 ## Choosing `max_D`
 
-The `max_D` parameter sets the maximum buffer radius for extracting raster values. It should be set larger than your expected scale of effect. If the optimized sigma reaches or approaches `max_D`, you will receive a warning suggesting you increase it. For chipmunks, 1700 m is a reasonable starting value that balances computational speed with adequate search range. Larger `max_D` values extract more raster cells per point, increasing both memory use and computation time.
+The `max_D` parameter sets the maximum buffer radius for extracting raster values. It should be set larger than your expected scale of effect. If the optimized sigma reaches or approaches `max_D`, you will receive a warning suggesting you increase it. For domestic cats, 1000 m is a reasonable starting value given their association with local residential features. Larger `max_D` values extract more raster cells per point, increasing both memory use and computation time.
 :::
 
 ```{r}
-#| label: chipmunk-kernel-print
+#| label: cat-kernel-print
 
 # Inspect the kernel_prep output
-kernel_inputs_chip
+kernel_inputs_cat
 ```
 
 ## Step 2: Fit an Initial Model
@@ -301,19 +298,19 @@ kernel_inputs_chip
 Next, we combine the kernel-weighted covariate values with our count data and fit a negative binomial GLM. The covariate names in `kernel_inputs$kernel_dat` match the raster layer names.
 
 ```{r}
-#| label: chipmunk-model
+#| label: cat-model
 
-dat_chip <- data.frame(
-  counts = chipmunk_counts,
-  kernel_inputs_chip$kernel_dat
+dat_cat <- data.frame(
+  counts = cat_counts,
+  kernel_inputs_cat$kernel_dat
 )
 
 # Check the column names
-names(dat_chip)
+names(dat_cat)
 
 # Fit negative binomial GLM
-mod_chip <- glm.nb(counts ~ urb_pca_na16, data = dat_chip)
-summary(mod_chip)
+mod_cat <- glm.nb(counts ~ urb_pca_na16, data = dat_cat)
+summary(mod_cat)
 ```
 
 ## Step 3: Optimize Sigma
@@ -321,99 +318,8 @@ summary(mod_chip)
 Now we use `multiScale_optim()` to find the sigma value that maximizes the model log-likelihood. The function uses the L-BFGS-B optimizer to search across sigma values while simultaneously updating the regression coefficients.
 
 ```{r}
-#| label: chipmunk-optim
+#| label: cat-optim
 
-opt_chip <- multiScale_optim(
-  fitted_mod = mod_chip,
-  kernel_inputs = kernel_inputs_chip,
-  n_cores = 4,
-  PSOCK = TRUE
-)
-```
-
-::: callout-warning
-## Pre-computed Fallback
-
-If the optimization does not complete (e.g., due to memory constraints), you can load a pre-computed result:
-
-```r
-opt_chip <- readRDS(file.path(PRECOMP_DIR, "opt_chipmunk_pca.rds"))
-```
-:::
-
-## Step 4: Examine Results
-
-```{r}
-#| label: chipmunk-summary
-
-summary(opt_chip)
-```
-
-The summary reports the optimized sigma, its standard error and 95% confidence interval, and the distance at which 90% of the kernel weight is captured. It also displays the fitted model coefficients.
-
-```{r}
-#| label: fig-chipmunk-kernel
-#| fig-cap: "Optimized Gaussian kernel for eastern chipmunk response to urbanization. The dashed line marks the distance capturing 90% of the kernel weight."
-
-plot(opt_chip)
-```
-
-### Sigma Profile
-
-The `profile_sigma()` function evaluates model fit across a range of sigma values. This is an important diagnostic: a clear minimum in AICc confirms that the optimizer found a well-defined scale of effect rather than a flat or multimodal likelihood surface.
-
-```{r}
-#| label: fig-chipmunk-profile
-#| fig-cap: "Profile of AICc across sigma values for eastern chipmunk. A clear minimum near sigma = 100 m confirms a well-defined scale of effect."
-
-prof_chip <- profile_sigma(opt_chip, n_pts = 15)
-plot(prof_chip)
-```
-
-### Marginal Effects
-
-```{r}
-#| label: fig-chipmunk-marginal
-#| fig-cap: "Marginal effect of PCA urbanization on eastern chipmunk counts. Shading shows the 95% confidence interval."
-
-plot_marginal_effects(opt_chip)
-```
-
-::: callout-note
-## Interpreting the Chipmunk Results
-
-The estimated sigma of approximately 104 m (90% kernel distance of approximately 171 m) indicates that eastern chipmunks respond to urbanization at a local scale. The negative coefficient (beta = -0.68, p = 0.0003) means that chipmunk counts decrease with increasing urbanization. This is consistent with their dependence on forest habitat.
-
-Note that our frequentist single-species estimate (sigma approximately 104 m) is much smaller than the Bayesian multi-species estimate from Moll et al. (scale~max~ = 6514 m). This difference likely reflects the methodological differences between the two approaches, including the joint estimation framework used by Moll et al.
-:::
-
-
-# Domestic Cat: A Boundary Case {#sec-cat}
-
-Domestic cats are strongly associated with residential areas. Their response to urbanization likely operates at a very fine spatial scale, reflecting the proximity of homes and food sources. This example demonstrates what happens when the true scale of effect falls at or below the resolution of the data.
-
-## Run the Workflow
-
-```{r}
-#| label: cat-workflow
-
-# Step 1: kernel_prep (smaller max_D is fine for cat)
-kernel_inputs_cat <- kernel_prep(
-  pts = cam_sf,
-  raster_stack = urb_pca,
-  max_D = 1000,
-  kernel = "gaussian",
-  progress = TRUE
-)
-
-# Step 2: Fit model
-dat_cat <- data.frame(
-  counts = cat_counts,
-  kernel_inputs_cat$kernel_dat
-)
-mod_cat <- glm.nb(counts ~ urb_pca_na16, data = dat_cat)
-
-# Step 3: Optimize
 opt_cat <- multiScale_optim(
   fitted_mod = mod_cat,
   kernel_inputs = kernel_inputs_cat,
@@ -425,10 +331,14 @@ opt_cat <- multiScale_optim(
 ::: callout-warning
 ## Pre-computed Fallback
 
-```r
+If the optimization does not complete (e.g., due to memory constraints), you can load a pre-computed result:
+
+``` r
 opt_cat <- readRDS(file.path(PRECOMP_DIR, "opt_cat_pca.rds"))
 ```
 :::
+
+## Step 4: Examine Results
 
 ```{r}
 #| label: cat-summary
@@ -436,48 +346,157 @@ opt_cat <- readRDS(file.path(PRECOMP_DIR, "opt_cat_pca.rds"))
 summary(opt_cat)
 ```
 
-Notice the warning: *"The standard error of one or more sigma estimates is >= 50% of the estimated mean value."* The estimated sigma is 30 m, which is the lower bound of the search range (equal to the raster resolution). This tells us that the optimizer would prefer an even smaller sigma if it could search below this threshold.
+The summary reports the optimized sigma, its standard error and 95% confidence interval, and the distance at which 90% of the kernel weight is captured. It also displays the fitted model coefficients.
+
+```{r}
+#| label: fig-cat-kernel
+#| fig-cap: "Optimized Gaussian kernel for domestic cat response to urbanization. The dashed line marks the distance capturing 90% of the kernel weight."
+
+plot(opt_cat)
+```
+
+### Sigma Profile
+
+The `profile_sigma()` function evaluates model fit across a range of sigma values. This is an important diagnostic: a clear minimum in AICc confirms that the optimizer found a well-defined scale of effect rather than a flat or multimodal likelihood surface.
+
+```{r}
+#| label: fig-cat-profile
+#| fig-cap: "Profile of AICc across sigma values for domestic cat. A clear minimum near sigma = 55 m confirms a well-defined scale of effect."
+
+prof_cat <- profile_sigma(opt_cat, n_pts = 15)
+plot(prof_cat)
+```
+
+### Marginal Effects
+
+```{r}
+#| label: fig-cat-marginal
+#| fig-cap: "Marginal effect of PCA urbanization on domestic cat counts. Shading shows the 95% confidence interval."
+
+plot_marginal_effects(opt_cat)
+```
+
+::: callout-note
+## Interpreting the Cat Results
+
+The estimated sigma of approximately 55 m (90% kernel distance of approximately 90 m) indicates that domestic cats respond to urbanization at a very local scale. The positive coefficient (beta = +0.85, p \< 0.001) means that cat counts increase sharply with urbanization. This is consistent with their dependence on residential areas for food, shelter, and access to the outdoors.
+
+Compared to the Bayesian multi-species estimate from Moll et al. (2019), our frequentist single-species estimate is smaller. This difference likely reflects the methodological differences between the two approaches, including the joint estimation framework used by Moll et al.
+:::
+
+# Eastern Chipmunk: A Boundary Case {#sec-chipmunk}
+
+![Eastern chipmunk (*Tamias striatus*).](images/chipmunk.jpg){width="50%" fig-align="center"}
+
+Eastern chipmunks are small-bodied, forest-associated rodents. Based on their ecology, we might expect them to respond to urbanization at a local scale. This example demonstrates what happens when the optimizer cannot find a clear scale of effect, which is a valuable diagnostic outcome.
+
+## Run the Workflow
+
+```{r}
+#| label: chipmunk-workflow
+
+# Step 1: kernel_prep
+kernel_inputs_chip <- kernel_prep(
+  pts = cam_sf,
+  raster_stack = urb_pca,
+  max_D = 1700,
+  kernel = "gaussian",
+  progress = FALSE
+)
+
+# Step 2: Fit model
+dat_chip <- data.frame(
+  counts = chipmunk_counts,
+  kernel_inputs_chip$kernel_dat
+)
+mod_chip <- glm.nb(counts ~ urb_pca_na16, data = dat_chip)
+
+# Step 3: Optimize
+opt_chip <- multiScale_optim(
+  fitted_mod = mod_chip,
+  kernel_inputs = kernel_inputs_chip,
+  n_cores = 4,
+  PSOCK = TRUE
+)
+```
+
+::: callout-warning
+## Pre-computed Fallback
+
+``` r
+opt_chip <- readRDS(file.path(PRECOMP_DIR, "opt_chipmunk_pca.rds"))
+```
+:::
+
+```{r}
+#| label: chipmunk-summary
+
+summary(opt_chip)
+```
+
+Notice the warnings: the estimated sigma hits the upper boundary (`max_D`), and the standard error is very large relative to the estimate. This tells us the optimizer could not find a well-defined scale of effect within the search range. But why? The `profile_sigma` diagnostic will help us understand what is happening.
 
 ## Understanding the Boundary with `profile_sigma`
 
 The sigma profile is the key diagnostic tool for understanding boundary estimates.
 
-::: {.panel-tabset}
-
-### Chipmunk Profile (well-behaved)
-
-```{r}
-#| label: fig-profile-chipmunk-compare
-#| fig-cap: "Chipmunk sigma profile shows a clear AICc minimum near 100 m."
-
-plot(profile_sigma(opt_chip, n_pts = 15))
-```
-
-### Cat Profile (boundary)
+::: panel-tabset
+### Cat Profile (well-behaved)
 
 ```{r}
-#| label: fig-profile-cat
-#| fig-cap: "Cat sigma profile shows monotonically increasing AICc. The best fit is at the smallest sigma evaluated, indicating the true scale is at or below 30 m."
+#| label: fig-profile-cat-compare
+#| fig-cap: "Cat sigma profile shows a clear AICc minimum near 55 m."
 
 plot(profile_sigma(opt_cat, n_pts = 15))
 ```
 
+### Chipmunk Profile (boundary)
+
+```{r}
+#| label: fig-profile-chipmunk
+#| fig-cap: "Chipmunk sigma profile. AICc is lowest at small sigma values, then rises to a broad plateau. Without a clear minimum, the optimizer gets stuck depending on where it starts."
+
+plot(profile_sigma(opt_chip, n_pts = 15))
+```
 :::
+
+Look carefully at the chipmunk profile. The AICc values are actually **lowest at small sigma values**, then rise to a broad, flat plateau at larger scales. The optimizer's default starting value (determined internally from `max_D`) lands on this plateau, where the gradient is essentially zero, and it cannot descend to the lower-AICc region.
+
+## The Role of Starting Values
+
+We can demonstrate this by providing a smaller starting value using the `par` argument. The `par` value is specified as a proportion of `max_D` (e.g., `par = 50/1700` starts the optimizer at sigma = 50 m).
+
+```{r}
+#| label: chipmunk-seeded
+
+opt_chip_seeded <- multiScale_optim(
+  fitted_mod = mod_chip,
+  kernel_inputs = kernel_inputs_chip,
+  n_cores = 4,
+  PSOCK = TRUE,
+  par = 50 / 1700
+)
+
+summary(opt_chip_seeded)
+```
+
+With a lower starting value, the optimizer now finds the **lower boundary** (sigma = 30 m) instead of the upper boundary. The effect is marginally significant (beta = -0.35, p = 0.06) and negative, consistent with chipmunks avoiding urbanized areas at a very local scale.
 
 ::: callout-important
-## What Does a Boundary Estimate Mean?
+## What Does This Tell Us?
 
-The domestic cat profile shows AICc increasing monotonically as sigma grows. There is no minimum within the search range; the best fit is at the smallest possible sigma (30 m). This tells us:
+The two optimization runs converged to opposite boundaries, and neither found a clear interior minimum. This is a signature of a **monotonically decreasing AICc profile**: the best fit is at the smallest possible sigma, and the surface flattens out at larger scales. The key lessons:
 
-1.  The urbanization effect on domestic cats is **real and significant** (beta = +0.56, p = 0.0002).
-2.  The **true scale of effect is at or below the raster resolution** (30 m). Cats likely respond to features within their immediate neighborhood (individual houses, yards, etc.).
-3.  Scale optimization is **not necessary or appropriate** for this species with this covariate at this resolution. A simple buffer extraction at the finest available scale would be sufficient.
+1.  The **profile plot is essential**. Without it, we might trust whichever boundary the optimizer happened to reach, not realizing the surface has no clear minimum.
+2.  **Starting values matter** when the likelihood surface has plateaus. If your result lands at a boundary with a large SE, try re-running with a different `par` value to see if the optimizer finds a different region.
+3.  For chipmunks, the weak negative effect at very small sigma (p = 0.06) suggests that any relationship with PCA urbanization operates below the raster resolution (30 m) and is not strong enough to produce a well-defined scale of effect. Other covariates (e.g., forest cover alone, canopy density) or other modeling frameworks (e.g., occupancy models) might reveal clearer scale-dependent patterns.
 
-This is a valuable diagnostic outcome. Not every species requires scale optimization, and `profile_sigma` helps you identify when scale estimation is informative versus when it is constrained by data resolution.
+This is a valuable diagnostic outcome. Not every species-covariate combination will produce a clean result, and recognizing when the data do not support a well-defined scale of effect is just as important as finding one.
 :::
 
-
 # White-tailed Deer: A Landscape-Scale Response {#sec-deer}
+
+![White-tailed deer in an urban setting.](images/deer.jpg){width="60%" fig-align="center"}
 
 White-tailed deer are large-bodied, mobile mammals that use landscapes at broad spatial extents. In urbanizing areas, deer often concentrate in remaining natural areas and can actually increase in abundance in moderate-density suburban landscapes. Based on their ecology, we expect their response to urbanization to operate at a much broader scale than either chipmunks or cats.
 
@@ -493,12 +512,12 @@ kernel_inputs_deer <- kernel_prep(
   raster_stack = urb_pca,
   max_D = 3000,
   kernel = "gaussian",
-  progress = TRUE
+  progress = FALSE
 )
 ```
 
 ::: callout-note
-With `max_D = 3000`, buffers around sites near the edge of the PCA raster (particularly near Lake Erie) will extend beyond the available data, producing NA values. In this case, approximately 5 of 207 sites will be excluded from the analysis. This is a common tradeoff when working with large buffers near study area boundaries.
+With `max_D = 3000`, buffers around sites near the edge of the PCA raster (particularly near Lake Erie) will extend beyond the available data. `multiScaleR` handles this gracefully: raster cells outside the boundary are simply excluded from the kernel-weighted average for that site, so all 207 sites can still contribute to the analysis. Be aware that sites whose buffers extend mostly beyond the raster will have their covariate estimates based on fewer cells, which can increase their uncertainty.
 :::
 
 ## Fit and Optimize
@@ -523,7 +542,7 @@ opt_deer <- multiScale_optim(
 ::: callout-warning
 ## Pre-computed Fallback
 
-```r
+``` r
 opt_deer <- readRDS(file.path(PRECOMP_DIR, "opt_deer_pca.rds"))
 ```
 :::
@@ -534,39 +553,37 @@ opt_deer <- readRDS(file.path(PRECOMP_DIR, "opt_deer_pca.rds"))
 summary(opt_deer)
 ```
 
-The estimated sigma of approximately 1285 m indicates a landscape-scale response, with the 90% kernel distance extending to approximately 2114 m. Note the warning suggesting a larger `max_D`: the optimizer recommends increasing the search extent. For a workshop setting, `max_D = 3000` provides a reasonable estimate, but for a publication analysis you would want to increase `max_D` and verify that the estimate stabilizes.
+The estimated sigma of approximately 770 m indicates a landscape-scale response, with the 90% kernel distance extending to approximately 1267 m. The standard error (approximately 305 m) is moderately large relative to the estimate, which is not uncommon for landscape-scale parameters. For a publication analysis, you might want to increase `max_D` and verify that the estimate stabilizes.
 
 ## Three-Species Comparison
 
-::: {.panel-tabset}
-
-### Chipmunk
-
-```{r}
-#| label: fig-compare-chipmunk
-#| fig-cap: "Optimized kernel for eastern chipmunk (sigma approximately 104 m)."
-
-plot(opt_chip)
-```
-
+::: panel-tabset
 ### Domestic Cat
 
 ```{r}
 #| label: fig-compare-cat
-#| fig-cap: "Optimized kernel for domestic cat (sigma = 30 m, lower boundary)."
+#| fig-cap: "Optimized kernel for domestic cat (sigma approximately 55 m)."
 
 plot(opt_cat)
+```
+
+### Eastern Chipmunk
+
+```{r}
+#| label: fig-compare-chipmunk
+#| fig-cap: "Optimized kernel for eastern chipmunk (sigma at upper boundary, no clear scale of effect)."
+
+plot(opt_chip)
 ```
 
 ### White-tailed Deer
 
 ```{r}
 #| label: fig-compare-deer
-#| fig-cap: "Optimized kernel for white-tailed deer (sigma approximately 1285 m)."
+#| fig-cap: "Optimized kernel for white-tailed deer (sigma approximately 770 m)."
 
 plot(opt_deer)
 ```
-
 :::
 
 ```{r}
@@ -574,23 +591,23 @@ plot(opt_deer)
 
 # Summary comparison
 data.frame(
-  Species = c("E. chipmunk", "Domestic cat", "White-tailed deer"),
+  Species = c("Domestic cat", "E. chipmunk", "White-tailed deer"),
   Sigma_m = c(
-    summary(opt_chip)$opt_scale$Mean,
     summary(opt_cat)$opt_scale$Mean,
+    summary(opt_chip)$opt_scale$Mean,
     summary(opt_deer)$opt_scale$Mean
   ),
   Dist_90pct_m = c(
-    summary(opt_chip)$opt_dist$Mean,
     summary(opt_cat)$opt_dist$Mean,
+    summary(opt_chip)$opt_dist$Mean,
     summary(opt_deer)$opt_dist$Mean
   ),
   Beta = c(
-    coef(opt_chip$opt_mod)[2],
     coef(opt_cat$opt_mod)[2],
+    coef(opt_chip$opt_mod)[2],
     coef(opt_deer$opt_mod)[2]
   ),
-  Direction = c("Negative", "Positive", "Positive")
+  Direction = c("Positive", "Boundary", "Positive")
 ) |> knitr::kable(digits = 1, col.names = c("Species", "Sigma (m)",
                   "90% Distance (m)", "Beta", "Direction"))
 ```
@@ -600,13 +617,12 @@ data.frame(
 
 These three species illustrate the diversity of scale-dependent responses to urbanization within a single mammal community:
 
--   **Eastern chipmunks** respond negatively to urbanization at a local scale (sigma approximately 100 m), consistent with their dependence on forest microhabitats.
--   **Domestic cats** respond positively to urbanization at the finest measurable scale (sigma <= 30 m), reflecting their association with individual residences.
--   **White-tailed deer** respond positively to urbanization at a landscape scale (sigma approximately 1300 m), likely reflecting their use of fragmented landscapes where suburban green spaces provide forage.
+-   **Domestic cats** respond positively to urbanization at a local scale (sigma approximately 55 m), reflecting their strong association with residential areas and individual homes.
+-   **Eastern chipmunks** show no clear scale of effect for PCA urbanization, with the optimizer running to the upper boundary. This suggests that the composite PCA variable does not capture the ecological processes driving chipmunk abundance at any single spatial scale.
+-   **White-tailed deer** respond positively to urbanization at a landscape scale (sigma approximately 770 m), likely reflecting their use of fragmented landscapes where suburban green spaces provide forage.
 
-A fixed-buffer analysis at a single scale would miss much of this variation. The kernel smoothing approach in `multiScaleR` provides both a continuous estimate of scale and a formal measure of uncertainty.
+A fixed-buffer analysis at a single scale would miss much of this variation. Importantly, a "null" result (as with chipmunks) is also informative: it tells us that not every species-covariate combination produces a meaningful scale of effect, prompting us to consider alternative covariates or modeling approaches.
 :::
-
 
 # Beyond the PCA: Development and Forest Cover {#sec-nlcd}
 
@@ -682,7 +698,7 @@ kernel_inputs_deer2 <- kernel_prep(
   raster_stack = env_stack,
   max_D = 5000,
   kernel = "gaussian",
-  progress = TRUE
+  progress = FALSE
 )
 
 # Step 2: Fit two-covariate model
@@ -706,7 +722,7 @@ opt_deer2 <- multiScale_optim(
 
 This analysis takes longer because two sigma parameters are being optimized simultaneously. If needed:
 
-```r
+``` r
 opt_deer2 <- readRDS(file.path(PRECOMP_DIR, "opt_deer_nlcd.rds"))
 ```
 :::
@@ -723,30 +739,72 @@ summary(opt_deer2)
 The decomposition reveals something the PCA composite conceals:
 
 -   **Development** (sigma = 30 m, boundary): no significant effect on deer counts (p = 0.19). Deer are indifferent to the presence of developed land at any measurable scale.
--   **Forest cover** (sigma approximately 1524 m): strong negative effect (beta = -0.43, p < 0.001). Deer counts decrease in areas with more forest cover at a landscape scale.
+-   **Forest cover** (sigma approximately 1524 m): strong negative effect (beta = -0.43, p \< 0.001). Deer counts decrease in areas with more forest cover at a landscape scale.
 
 This may seem counterintuitive, but it is consistent with the "suburban deer" phenomenon. In this system, deer thrive in the fragmented matrix of parks, yards, and agricultural edges characteristic of moderate suburbanization. Their response is to landscape-level forest cover (or its absence), not to local development features.
 
-The PCA covariate, which blends these components, showed a positive effect of urbanization on deer (beta = +0.29). The NLCD decomposition clarifies that this effect is driven by forest loss at a broad scale, not by development per se.
+The PCA covariate, which blends these components, showed a positive effect of urbanization on deer (beta = +0.36). The NLCD decomposition clarifies that this effect is driven by forest loss at a broad scale, not by development per se.
 :::
 
-## Model Comparison
+## Checking with `profile_sigma` and Alternative Starting Values
 
-We can formally compare the single-covariate PCA model to the two-covariate NLCD model using AIC.
+As we saw with the chipmunk example, the sigma profile can reveal whether the optimizer found the best solution. Let's check the NLCD deer result.
+
+```{r}
+#| label: fig-deer-nlcd-profile
+#| fig-cap: "Sigma profiles for deer NLCD covariates. Check whether each covariate's sigma landed at a clear AICc minimum or at a boundary."
+
+plot(profile_sigma(opt_deer2, n_pts = 15))
+```
+
+The development sigma hit the lower boundary (30 m), and the forest sigma is large with a wide SE. The profile may suggest that alternative starting values could find a better-fitting solution. Let's re-run the optimization with starting values closer to ecologically reasonable scales:
+
+```{r}
+#| label: deer-nlcd-seeded
+
+opt_deer2_seeded <- multiScale_optim(
+  fitted_mod = mod_deer2,
+  kernel_inputs = kernel_inputs_deer2,
+  n_cores = 4,
+  PSOCK = TRUE,
+  par = c(500 / 5000, 1500 / 5000)
+)
+
+# Fallback: opt_deer2_seeded <- readRDS(file.path(PRECOMP_DIR, "opt_deer_nlcd_seeded.rds"))
+
+summary(opt_deer2_seeded)
+```
+
+::: callout-warning
+## Pre-computed Fallback
+
+This analysis takes longer because two sigma parameters are being optimized simultaneously. If needed:
+
+``` r
+opt_deer2_seeded <- readRDS(file.path(PRECOMP_DIR, "opt_deer_nlcd_seeded.rds"))
+```
+:::
+
+The seeded optimization converges to slightly different sigma values. We can compare all three models (PCA, default NLCD, seeded NLCD) using `aic_tab`:
+
+## Model Comparison
 
 ```{r}
 #| label: deer-model-compare
 
-aic_tab(list(opt_deer, opt_deer2),
-        mod_names = c("PCA urbanization", "Development + Forest"))
+aic_tab(list(opt_deer, opt_deer2, opt_deer2_seeded),
+        mod_names = c("PCA urbanization",
+                      "Dev + Forest (default)",
+                      "Dev + Forest (seeded)"))
 ```
 
 ::: callout-tip
-## A Note on `aic_tab`
+## Starting Values and Model Selection
+
+The seeded NLCD model has a slightly lower AICc than the default NLCD model. The difference is small (delta AICc \< 1), so both are essentially equivalent in terms of support from the data. However, this example illustrates an important practical point: **with multi-covariate models, it is good practice to try several starting values and compare the resulting models using `aic_tab`.** If a different starting value produces a substantially lower AICc, the default run may have converged to a local optimum.
 
 The `aic_tab()` function adjusts the AIC calculation to account for the additional sigma parameter(s) estimated during optimization. This ensures fair comparison between models that estimate different numbers of scale parameters.
 :::
-
 
 # Spatial Prediction {#sec-prediction}
 
@@ -755,12 +813,12 @@ One powerful feature of `multiScaleR` is the ability to project optimized models
 ## Create Kernel-Scaled Rasters
 
 ```{r}
-#| label: chip-scaled-raster
+#| label: cat-scaled-raster
 
-# Apply the optimized chipmunk kernel to the urbanization raster
-scaled_rast_chip <- kernel_scale.raster(
+# Apply the optimized cat kernel to the urbanization raster
+scaled_rast_cat <- kernel_scale.raster(
   raster_stack = urb_pca,
-  multiScaleR = opt_chip,
+  multiScaleR = opt_cat,
   fft = TRUE,
   scale_center = TRUE
 )
@@ -775,12 +833,12 @@ When `scale_center = TRUE`, the raster values are standardized using the same me
 ## Predict Across the Landscape
 
 ```{r}
-#| label: fig-predict-chip
-#| fig-cap: "Predicted eastern chipmunk counts across the Cleveland Metroparks study area, based on PCA urbanization smoothed at the optimized scale of effect (sigma approximately 104 m)."
+#| label: fig-predict-cat
+#| fig-cap: "Predicted domestic cat counts across the Cleveland Metroparks study area, based on PCA urbanization smoothed at the optimized scale of effect (sigma approximately 55 m)."
 
-pred_chip <- terra::predict(scaled_rast_chip, opt_chip$opt_mod, type = "response")
-plot(pred_chip, main = "Predicted Chipmunk Counts")
-points(vect(cam_sf), cex = 0.3, pch = 16)
+pred_cat <- terra::predict(scaled_rast_cat, opt_cat$opt_mod, type = "response")
+plot(pred_cat, main = "Predicted Cat Counts")
+points(vect(cam_sf), cex = 0.3, pch = 16, col = 'red')
 ```
 
 ## Deer Prediction at Landscape Scale
@@ -798,38 +856,73 @@ scaled_rast_deer <- kernel_scale.raster(
 pred_deer <- terra::predict(scaled_rast_deer, opt_deer$opt_mod, type = "response")
 ```
 
-::: {.panel-tabset}
+## Deer NLCD Prediction (Seeded Model)
 
-### Chipmunk Predictions
+We can also project the two-covariate NLCD model. Because the NLCD binary rasters code Lake Erie as 0 (not NA), we mask the prediction using the PCA raster's NA pattern so that water is not plotted as land.
 
 ```{r}
-#| label: fig-pred-compare-chip
-#| fig-cap: "Chipmunk predictions show fine-grained spatial variation reflecting the small scale of effect."
+#| label: deer-nlcd-scaled-raster
 
-plot(pred_chip, main = "E. Chipmunk (sigma ~ 104 m)")
-points(vect(cam_sf), cex = 0.3, pch = 16)
+# Create kernel-scaled rasters for the seeded NLCD model
+scaled_rast_nlcd <- kernel_scale.raster(
+  raster_stack = env_stack,
+  multiScaleR = opt_deer2_seeded,
+  fft = TRUE,
+  scale_center = TRUE
+)
+
+# Predict deer counts from the two-covariate model
+pred_deer_nlcd <- terra::predict(scaled_rast_nlcd, opt_deer2_seeded$opt_mod,
+                                 type = "response")
+
+# Mask Lake Erie: crop to PCA extent, then apply PCA NA mask
+pred_deer_nlcd <- crop(pred_deer_nlcd, ext(urb_pca))
+pred_deer_nlcd <- mask(pred_deer_nlcd, urb_pca)
 ```
 
-### Deer Predictions
+::: panel-tabset
+### Cat (PCA, sigma ~ 55 m)
+
+```{r}
+#| label: fig-pred-compare-cat
+#| fig-cap: "Cat predictions show fine-grained spatial variation reflecting the small scale of effect."
+
+plot(pred_cat, main = "Domestic Cat (PCA, sigma ~ 55 m)")
+points(vect(cam_sf), cex = 0.3, pch = 16, col = 'red')
+```
+
+### Deer (PCA, sigma ~ 770 m)
 
 ```{r}
 #| label: fig-pred-compare-deer
-#| fig-cap: "Deer predictions show broad, smooth spatial patterns reflecting the landscape scale of effect."
+#| fig-cap: "Deer predictions from the PCA model show broad, smooth spatial patterns reflecting the landscape scale of effect."
 
-plot(pred_deer, main = "White-tailed Deer (sigma ~ 1285 m)")
+plot(pred_deer, main = "White-tailed Deer (PCA, sigma ~ 770 m)")
 points(vect(cam_sf), cex = 0.3, pch = 16)
 ```
 
+### Deer (NLCD, seeded)
+
+```{r}
+#| label: fig-pred-compare-deer-nlcd
+#| fig-cap: "Deer predictions from the two-covariate NLCD model (seeded starting values). The prediction surface reflects separate scales for development (sigma ~ 310 m) and forest cover (sigma ~ 1729 m)."
+
+plot(pred_deer_nlcd, main = "White-tailed Deer (NLCD, seeded)")
+points(vect(cam_sf), cex = 0.3, pch = 16)
+```
 :::
 
 ::: callout-note
-## The Visual Impact of Scale
+## The Visual Impact of Scale and Covariates
 
-Compare the two prediction surfaces. The chipmunk predictions show fine-grained variation that tracks local landscape features, while the deer predictions show broad, smooth gradients across the study area. This is a direct consequence of the different optimized sigma values: the chipmunk kernel concentrates weight locally, producing predictions that respond to nearby conditions, while the deer kernel averages over a broad extent, smoothing out local variation.
+Compare the three prediction surfaces:
+
+-   The **cat predictions** show fine-grained variation that tracks local landscape features, a direct consequence of the small sigma (approximately 55 m).
+-   The **deer PCA predictions** show broad, smooth gradients, reflecting the landscape-scale sigma (approximately 770 m).
+-   The **deer NLCD predictions** combine two scales: local development (sigma approximately 310 m) and landscape forest cover (sigma approximately 1729 m). The resulting surface captures spatial structure that the single PCA composite misses.
 
 These contrasting prediction surfaces underscore why identifying the appropriate scale of effect matters for conservation and management planning. Actions at the wrong spatial scale will fail to address the actual ecological drivers.
 :::
-
 
 # Summary and Next Steps {#sec-summary}
 
@@ -839,32 +932,32 @@ These contrasting prediction surfaces underscore why identifying the appropriate
 #| label: results-table
 
 results <- data.frame(
-  Species = c("E. chipmunk", "Domestic cat", "White-tailed deer",
+  Species = c("Domestic cat", "E. chipmunk", "White-tailed deer",
               "Deer (developed)", "Deer (forested)"),
   Covariate = c("PCA urb", "PCA urb", "PCA urb",
                 "NLCD developed", "NLCD forested"),
   Sigma_m = c(
-    round(summary(opt_chip)$opt_scale$Mean, 0),
     round(summary(opt_cat)$opt_scale$Mean, 0),
+    round(summary(opt_chip)$opt_scale$Mean, 0),
     round(summary(opt_deer)$opt_scale$Mean, 0),
     round(summary(opt_deer2)$opt_scale$Mean[1], 0),
     round(summary(opt_deer2)$opt_scale$Mean[2], 0)
   ),
   Beta = c(
-    round(coef(opt_chip$opt_mod)[2], 3),
     round(coef(opt_cat$opt_mod)[2], 3),
+    round(coef(opt_chip$opt_mod)[2], 3),
     round(coef(opt_deer$opt_mod)[2], 3),
     round(coef(opt_deer2$opt_mod)[2], 3),
     round(coef(opt_deer2$opt_mod)[3], 3)
   ),
   P_value = c(
-    format(summary(opt_chip$opt_mod)$coefficients[2, 4], digits = 3),
     format(summary(opt_cat$opt_mod)$coefficients[2, 4], digits = 3),
+    format(summary(opt_chip$opt_mod)$coefficients[2, 4], digits = 3),
     format(summary(opt_deer$opt_mod)$coefficients[2, 4], digits = 3),
     format(summary(opt_deer2$opt_mod)$coefficients[2, 4], digits = 3),
     format(summary(opt_deer2$opt_mod)$coefficients[3, 4], digits = 3)
   ),
-  Notes = c("Clean result", "Lower boundary", "Boundary warning",
+  Notes = c("Clean result", "Upper boundary (no effect)", "Landscape scale",
             "No effect (boundary)", "Strong landscape effect")
 )
 
@@ -876,9 +969,9 @@ knitr::kable(results,
 
 ## Key Takeaways
 
-1.  **Scale of effect varies among species.** Even within a single mammal community, species respond to the same landscape variable at spatial scales ranging from less than 30 m to over 1300 m. A single fixed-buffer analysis would miss this variation.
+1.  **Scale of effect varies among species.** Even within a single mammal community, species respond to the same landscape variable at different spatial scales. Domestic cats respond locally (sigma approximately 55 m), while deer respond at a landscape scale (sigma approximately 770 m). A single fixed-buffer analysis would miss this variation.
 
-2.  **Diagnostic tools are essential.** The `profile_sigma()` function distinguishes between well-defined scale estimates (clear AICc minimum) and boundary cases (monotonic profile). Both outcomes are informative.
+2.  **Diagnostic tools are essential.** The `profile_sigma()` function distinguishes between well-defined scale estimates (clear AICc minimum, as with cat and deer) and uninformative cases (flat profile, as with chipmunk). Both outcomes are informative, and recognizing a null result is just as important as finding a clear signal.
 
 3.  **Composite covariates can obscure ecological patterns.** The PCA urbanization index showed that deer respond positively to "urbanization," but the NLCD decomposition revealed this is driven by landscape-scale forest loss, not by development per se.
 
@@ -910,8 +1003,13 @@ If time permits, try analyzing one of the other 11 species in the dataset. Choos
 #| label: challenge
 #| eval: false
 
+# Species are indexed in this order:
+# 1=Dom.cat, 2=E.chipmunk, 3=Coyote, 4=Deer, 5=Fox squirrel,
+# 6=Gray squirrel, 7=Mustelid, 8=V.opossum, 9=E.cottontail,
+# 10=Raccoon, 11=Red fox, 12=Red squirrel, 13=Str.skunk, 14=Woodchuck
+
 # Template for analyzing any species
-sp_index <- 10  # Change this: 1-14 (see species list in Section 3)
+sp_index <- 10  # Change this: 1-14 (see species list above)
 sp_name <- species_names[sp_index]
 my_counts <- rowSums(summer[, , sp_index], na.rm = TRUE)
 
