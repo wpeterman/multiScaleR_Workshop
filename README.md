@@ -2,7 +2,7 @@
 
 **Bill Peterman & Joseph Drake**
 
-A half-day hands-on tutorial for identifying species-specific scales of effect using camera trap data and the [`multiScaleR`](https://github.com/wpeterman/multiScaleR) R package. The workshop uses real data from Moll et al. (2019, *Ecography*) — 207 camera trap sites across the Cleveland Metroparks urban park system — and three focal mammal species that illustrate contrasting patterns of habitat response.
+A half-day hands-on tutorial for identifying species-specific scales of effect using camera trap data and the [`multiScaleR`](https://github.com/wpeterman/multiScaleR) R package. The workshop uses real data from Moll et al. (2019, *Ecography*), covering 207 camera trap sites across the Cleveland Metroparks urban park system and three focal mammal species that illustrate contrasting patterns of habitat response.
 
 ---
 
@@ -87,7 +87,7 @@ install.packages(c("terra", "sf", "readxl", "MASS", "ggplot2", "dplyr"))
 remotes::install_github("wpeterman/multiScaleR")
 ```
 
-`multiScaleR` >= 0.6.11 is required. **Minimum 8 GB RAM is recommended** — the deer analysis (Section 6) uses approximately 1.5 GB.
+`multiScaleR` >= 0.6.11 is required. **Minimum 8 GB RAM is recommended;** the deer analysis (Section 6) uses approximately 1.5 GB.
 
 2. Open `workshop.Rproj` in RStudio. This sets the working directory correctly so all relative file paths resolve without modification.
 
@@ -96,7 +96,7 @@ remotes::install_github("wpeterman/multiScaleR")
 ### Running Code
 
 - Execute individual chunks with the green **Run** button or `Ctrl+Enter` / `Cmd+Enter` (Mac).
-- Work through sections **in order** — later sections depend on objects created earlier.
+- Work through sections **in order**; later sections depend on objects created earlier.
 - The tutorial document has `eval: false` set globally, so rendering the `.qmd` file will not re-run the analysis. Run chunks interactively instead.
 
 ### Pre-computed Results
