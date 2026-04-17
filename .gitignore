@@ -2,10 +2,8 @@
 .Rhistory
 .RData
 .Rproj.user/
-*.Rproj
 
 # Rendered output
-*.html
 *_files/
 
 # OS files
