@@ -1,7 +1,6 @@
 # R session files
 .Rhistory
 .RData
-.Rproj.user/
 
 # Rendered output
 *_files/
@@ -9,3 +8,4 @@
 # OS files
 .DS_Store
 Thumbs.db
+.Rproj.user
