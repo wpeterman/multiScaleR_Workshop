@@ -74,6 +74,18 @@ Open either file in any web browser. No R installation is required to view them.
 
 ---
 
+## Getting the Data
+
+The data and precomputed model files are distributed as release assets rather than in the repository ZIP, because GitHub does not serve large files correctly from the ZIP download.
+
+1. Download the code: use the green **Code > Download ZIP** button on the repository page, then unzip.
+2. Download the data from the [v1.0 release](https://github.com/wpeterman/multiScaleR_Workshop/releases/tag/v1.0):
+   - **`workshop_data.zip`** (required, ~13 MB) — camera locations, detection counts, and raster covariates
+   - **`workshop_precomputed.zip`** (optional but recommended, ~506 MB) — pre-optimized model results for each species
+3. Unzip both files into the repository folder so that `data/` and `precomputed/` sit alongside `multiScaleR_workshop.qmd`.
+
+---
+
 ## Working Through the Tutorial Interactively
 
 The tutorial is designed to be run chunk-by-chunk in RStudio using `multiScaleR_workshop.qmd`.
