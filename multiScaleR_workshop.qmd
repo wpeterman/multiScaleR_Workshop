@@ -31,11 +31,11 @@ Welcome to the `multiScaleR` workshop! In this hands-on tutorial, you will learn
 
 By the end of this workshop you will be able to:
 
--   Prepare spatial data for scale of effect analysis
--   Optimize kernel scale parameters using `multiScaleR`
--   Interpret results, including boundary cases and diagnostic profiles
--   Extend analyses from composite covariates to individual land cover types
--   Project predictions across a landscape
+- Prepare spatial data for scale of effect analysis
+- Optimize kernel scale parameters using `multiScaleR`
+- Interpret results, including boundary cases and diagnostic profiles
+- Extend analyses from composite covariates to individual land cover types
+- Project predictions across a landscape
 
 ## How to Use This Tutorial
 
@@ -55,17 +55,23 @@ Make sure you have the following packages installed before we begin. If any are 
 #| label: setup
 #| eval: true
 
-library(multiScaleR)
-library(terra)
-library(sf)
-library(readxl)
-library(MASS)
-library(ggplot2)
-library(dplyr)
+packages <- c("multiScaleR", "terra", "sf", "readxl", "MASS",
+              "ggplot2", "dplyr", "tmap")
+
+for (pkg in packages) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg, dependencies = TRUE)
+    message("Installed: ", pkg)
+  }
+  suppressPackageStartupMessages(library(pkg, character.only = TRUE))
+}
+
+# All maps in this tutorial are interactive
+tmap_mode("view")
 
 # Verify multiScaleR version
-if (packageVersion("multiScaleR") < "0.6.11") {
-  warning("multiScaleR >= 0.6.11 is required for this tutorial. Update with remotes::install_github('wpeterman/multiScaleR')")
+if (packageVersion("multiScaleR") < "0.6.13") {
+  warning("multiScaleR >= 0.6.13 is required for this tutorial. Update with install.packages('multiScaleR')")
 }
 
 # Set file paths -- UPDATE THESE to match your local directory
@@ -252,10 +258,12 @@ cam_sf <- st_transform(cam_sf, crs(urb_pca))
 
 ```{r}
 #| label: fig-study-area
-#| fig-cap: "PCA urbanization raster for the Cleveland Metroparks study area. Red/warm colors indicate high urbanization; blue/cool colors indicate low urbanization (more forested). Points show camera trap locations."
+#| fig-cap: "PCA urbanization raster for the Cleveland Metroparks study area. Warm colors indicate high urbanization; cool colors indicate low urbanization (more forested). Points show camera trap locations."
 
-plot(urb_pca, main = "PCA Urbanization")
-points(vect(cam_sf), cex = 0.5, pch = 16, col = 'red')
+tm_shape(urb_pca) +
+  tm_raster(palette = "-RdYlBu", title = "PCA Urbanization") +
+  tm_shape(cam_sf) +
+  tm_dots(col = "black", size = 0.05, alpha = 0.8, title = "Camera sites")
 ```
 
 # Domestic Cat: The Full Workflow {#sec-cat}
@@ -517,7 +525,7 @@ kernel_inputs_deer <- kernel_prep(
 ```
 
 ::: callout-note
-With `max_D = 3000`, buffers around sites near the edge of the PCA raster (particularly near Lake Erie) will extend beyond the available data. `multiScaleR` handles this gracefully: raster cells outside the boundary are simply excluded from the kernel-weighted average for that site, so all 207 sites can still contribute to the analysis. Be aware that sites whose buffers extend mostly beyond the raster will have their covariate estimates based on fewer cells, which can increase their uncertainty.
+With `max_D = 3000`, buffers around sites near the edge of the PCA raster (particularly near Lake Erie) will extend beyond the available data. `multiScaleR` handles this without issue: raster cells outside the boundary are simply excluded from the kernel-weighted average for that site, so all 207 sites can still contribute to the analysis. Be aware that sites whose buffers extend mostly beyond the raster will have their covariate estimates based on fewer cells, which can increase their uncertainty.
 :::
 
 ## Fit and Optimize
@@ -617,9 +625,9 @@ data.frame(
 
 These three species illustrate the diversity of scale-dependent responses to urbanization within a single mammal community:
 
--   **Domestic cats** respond positively to urbanization at a local scale (sigma approximately 55 m), reflecting their strong association with residential areas and individual homes.
--   **Eastern chipmunks** show no clear scale of effect for PCA urbanization, with the optimizer running to the upper boundary. This suggests that the composite PCA variable does not capture the ecological processes driving chipmunk abundance at any single spatial scale.
--   **White-tailed deer** respond positively to urbanization at a landscape scale (sigma approximately 770 m), likely reflecting their use of fragmented landscapes where suburban green spaces provide forage.
+- **Domestic cats** respond positively to urbanization at a local scale (sigma approximately 55 m), reflecting their strong association with residential areas and individual homes.
+- **Eastern chipmunks** show no clear scale of effect for PCA urbanization, with the optimizer running to the upper boundary. This suggests that the composite PCA variable does not capture the ecological processes driving chipmunk abundance at any single spatial scale.
+- **White-tailed deer** respond positively to urbanization at a landscape scale (sigma approximately 770 m), likely reflecting their use of fragmented landscapes where suburban green spaces provide forage.
 
 A fixed-buffer analysis at a single scale would miss much of this variation. Importantly, a "null" result (as with chipmunks) is also informative: it tells us that not every species-covariate combination produces a meaningful scale of effect, prompting us to consider alternative covariates or modeling approaches.
 :::
@@ -674,15 +682,19 @@ names(env_stack) <- c("developed", "forested")
 
 ```{r}
 #| label: fig-nlcd
-#| fig-cap: "Binary land cover rasters derived from the 2016 NLCD. Left: developed land (classes 21-24). Right: forested land (classes 41-43)."
-#| fig-width: 10
-#| fig-height: 5
+#| fig-cap: "Binary land cover rasters derived from the 2016 NLCD. Left: developed land (classes 21-24). Right: forested land (classes 41-43). Maps are synchronized — panning or zooming one updates the other."
 
-par(mfrow = c(1, 2))
-plot(developed, main = "Developed", col = c("white", "red"))
-points(vect(cam_sf), cex = 0.3, pch = 16)
-plot(forested, main = "Forested", col = c("white", "darkgreen"))
-points(vect(cam_sf), cex = 0.3, pch = 16)
+m_dev <- tm_shape(developed) +
+  tm_raster(palette = c("lightyellow", "firebrick"), style = "cat",
+            title = "Developed", labels = c("No", "Yes")) +
+  tm_shape(cam_sf) + tm_dots(size = 0.03, alpha = 0.7)
+
+m_for <- tm_shape(forested) +
+  tm_raster(palette = c("lightyellow", "darkgreen"), style = "cat",
+            title = "Forested", labels = c("No", "Yes")) +
+  tm_shape(cam_sf) + tm_dots(size = 0.03, alpha = 0.7)
+
+tmap_arrange(m_dev, m_for, ncol = 2, sync = TRUE)
 ```
 
 ## Multi-Covariate Analysis: Deer
@@ -738,12 +750,12 @@ summary(opt_deer2)
 
 The decomposition reveals something the PCA composite conceals:
 
--   **Development** (sigma = 30 m, boundary): no significant effect on deer counts (p = 0.19). Deer are indifferent to the presence of developed land at any measurable scale.
--   **Forest cover** (sigma approximately 1524 m): strong negative effect (beta = -0.43, p \< 0.001). Deer counts decrease in areas with more forest cover at a landscape scale.
+- **Development** (sigma = 30 m, boundary): no significant effect on deer counts (p = 0.19). There is no detectable relationship between local development and deer counts at any scale we can estimate.
+- **Forest cover** (sigma approximately 1524 m): strong negative effect (beta = -0.43, p \< 0.001). Deer counts are lower at sites surrounded by more forest at a landscape scale.
 
-This may seem counterintuitive, but it is consistent with the "suburban deer" phenomenon. In this system, deer thrive in the fragmented matrix of parks, yards, and agricultural edges characteristic of moderate suburbanization. Their response is to landscape-level forest cover (or its absence), not to local development features.
+The PCA composite showed a positive effect of urbanization on deer (beta = +0.36, p \< 0.001). The NLCD decomposition clarifies what is actually driving that signal: it is landscape-scale forest composition, not local development. The two components of the PCA urbanization axis operate at different scales and have different relationships with deer abundance, and lumping them into a single composite index hides that distinction.
 
-The PCA covariate, which blends these components, showed a positive effect of urbanization on deer (beta = +0.36). The NLCD decomposition clarifies that this effect is driven by forest loss at a broad scale, not by development per se.
+This is a key practical lesson: composite covariates can produce interpretable results while obscuring the underlying ecological mechanism. Decomposing them into constituent parts, and allowing each part its own optimized scale, can substantially sharpen inference.
 :::
 
 ## Checking with `profile_sigma` and Alternative Starting Values
@@ -837,8 +849,11 @@ When `scale_center = TRUE`, the raster values are standardized using the same me
 #| fig-cap: "Predicted domestic cat counts across the Cleveland Metroparks study area, based on PCA urbanization smoothed at the optimized scale of effect (sigma approximately 55 m)."
 
 pred_cat <- terra::predict(scaled_rast_cat, opt_cat$opt_mod, type = "response")
-plot(pred_cat, main = "Predicted Cat Counts")
-points(vect(cam_sf), cex = 0.3, pch = 16, col = 'red')
+
+tm_shape(pred_cat) +
+  tm_raster(palette = "YlOrRd", title = "Predicted counts") +
+  tm_shape(cam_sf) +
+  tm_dots(col = "black", size = 0.04, alpha = 0.7, title = "Camera sites")
 ```
 
 ## Deer Prediction at Landscape Scale
@@ -881,24 +896,28 @@ pred_deer_nlcd <- mask(pred_deer_nlcd, urb_pca)
 ```
 
 ::: panel-tabset
-### Cat (PCA, sigma ~ 55 m)
+### Cat (PCA, sigma \~ 55 m)
 
 ```{r}
 #| label: fig-pred-compare-cat
 #| fig-cap: "Cat predictions show fine-grained spatial variation reflecting the small scale of effect."
 
-plot(pred_cat, main = "Domestic Cat (PCA, sigma ~ 55 m)")
-points(vect(cam_sf), cex = 0.3, pch = 16, col = 'red')
+tm_shape(pred_cat) +
+  tm_raster(palette = "YlOrRd", title = "Predicted counts") +
+  tm_shape(cam_sf) +
+  tm_dots(col = "black", size = 0.04, alpha = 0.7)
 ```
 
-### Deer (PCA, sigma ~ 770 m)
+### Deer (PCA, sigma \~ 770 m)
 
 ```{r}
 #| label: fig-pred-compare-deer
 #| fig-cap: "Deer predictions from the PCA model show broad, smooth spatial patterns reflecting the landscape scale of effect."
 
-plot(pred_deer, main = "White-tailed Deer (PCA, sigma ~ 770 m)")
-points(vect(cam_sf), cex = 0.3, pch = 16)
+tm_shape(pred_deer) +
+  tm_raster(palette = "YlGn", title = "Predicted counts") +
+  tm_shape(cam_sf) +
+  tm_dots(col = "black", size = 0.04, alpha = 0.7)
 ```
 
 ### Deer (NLCD, seeded)
@@ -907,8 +926,10 @@ points(vect(cam_sf), cex = 0.3, pch = 16)
 #| label: fig-pred-compare-deer-nlcd
 #| fig-cap: "Deer predictions from the two-covariate NLCD model (seeded starting values). The prediction surface reflects separate scales for development (sigma ~ 310 m) and forest cover (sigma ~ 1729 m)."
 
-plot(pred_deer_nlcd, main = "White-tailed Deer (NLCD, seeded)")
-points(vect(cam_sf), cex = 0.3, pch = 16)
+tm_shape(pred_deer_nlcd) +
+  tm_raster(palette = "PuBuGn", title = "Predicted counts") +
+  tm_shape(cam_sf) +
+  tm_dots(col = "black", size = 0.04, alpha = 0.7)
 ```
 :::
 
@@ -917,9 +938,9 @@ points(vect(cam_sf), cex = 0.3, pch = 16)
 
 Compare the three prediction surfaces:
 
--   The **cat predictions** show fine-grained variation that tracks local landscape features, a direct consequence of the small sigma (approximately 55 m).
--   The **deer PCA predictions** show broad, smooth gradients, reflecting the landscape-scale sigma (approximately 770 m).
--   The **deer NLCD predictions** combine two scales: local development (sigma approximately 310 m) and landscape forest cover (sigma approximately 1729 m). The resulting surface captures spatial structure that the single PCA composite misses.
+- The **cat predictions** show fine-grained variation that tracks local landscape features, a direct consequence of the small sigma (approximately 55 m).
+- The **deer PCA predictions** show broad, smooth gradients, reflecting the landscape-scale sigma (approximately 770 m).
+- The **deer NLCD predictions** combine two scales: local development (sigma approximately 310 m) and landscape forest cover (sigma approximately 1729 m). The resulting surface captures spatial structure that the single PCA composite misses.
 
 These contrasting prediction surfaces underscore why identifying the appropriate scale of effect matters for conservation and management planning. Actions at the wrong spatial scale will fail to address the actual ecological drivers.
 :::
@@ -973,7 +994,7 @@ knitr::kable(results,
 
 2.  **Diagnostic tools are essential.** The `profile_sigma()` function distinguishes between well-defined scale estimates (clear AICc minimum, as with cat and deer) and uninformative cases (flat profile, as with chipmunk). Both outcomes are informative, and recognizing a null result is just as important as finding a clear signal.
 
-3.  **Composite covariates can obscure ecological patterns.** The PCA urbanization index showed that deer respond positively to "urbanization," but the NLCD decomposition revealed this is driven by landscape-scale forest loss, not by development per se.
+3.  **Composite covariates can obscure ecological mechanisms.** The PCA urbanization index showed a positive effect of urbanization on deer, but the NLCD decomposition revealed that the two components of that index operate at different scales and in different ways. Landscape-scale forest composition drives the pattern; local development does not. A composite that blends these components into one axis would never reveal this distinction.
 
 4.  **`max_D` matters.** The choice of maximum search distance affects both the results and the computational demands. Start with an ecologically reasonable value, check for boundary warnings, and increase if needed.
 
@@ -981,19 +1002,19 @@ knitr::kable(results,
 
 `multiScaleR` supports several additional capabilities:
 
--   **Alternative kernel functions**: exponential (`"exp"`), exponential power (`"expow"`), and fixed buffer (`"fixed"`)
--   **Hierarchical models**: integration with `unmarked` for occupancy and N-mixture models
--   **Zero-inflated models**: support for `pscl::zeroinfl()` models
--   **Spatial autocorrelation**: `gls` models from `nlme` with spatial correlation structures
--   **Clamping**: `kernel_scale.raster()` supports clamping projected values to prevent extrapolation
--   **Profile-likelihood confidence intervals**: `summary(opt, profile = TRUE)` for more reliable CIs
+- **Alternative kernel functions**: exponential (`"exp"`), exponential power (`"expow"`), and fixed buffer (`"fixed"`)
+- **Hierarchical models**: integration with `unmarked` for occupancy and N-mixture models
+- **Zero-inflated models**: support for `pscl::zeroinfl()` models
+- **Spatial autocorrelation**: `gls` models from `nlme` with spatial correlation structures
+- **Clamping**: `kernel_scale.raster()` supports clamping projected values to prevent extrapolation
+- **Profile-likelihood confidence intervals**: `summary(opt, profile = TRUE)` for more reliable CIs
 
 ## Resources
 
--   **multiScaleR GitHub**: [github.com/wpeterman/multiScaleR](https://github.com/wpeterman/multiScaleR)
--   **Package documentation**: `?multiScaleR` or the three included vignettes (`vignette(package = "multiScaleR")`)
--   **Peterman (2026)**: multiScaleR: an R package for multiscale ecological modeling. *Landscape Ecology*. doi: 10.1007/s10980-025-02267-x
--   **Moll et al. (2019)**: At what spatial scale(s) do mammals respond to urbanization? *Ecography* 43: 171-183. doi: 10.1111/ecog.04762
+- **multiScaleR GitHub**: [github.com/wpeterman/multiScaleR](https://github.com/wpeterman/multiScaleR)
+- **Package documentation**: `?multiScaleR` or the three included vignettes (`vignette(package = "multiScaleR")`)
+- **Peterman (2026)**: multiScaleR: an R package for multiscale ecological modeling. *Landscape Ecology*. doi: 10.1007/s10980-025-02267-x
+- **Moll et al. (2019)**: At what spatial scale(s) do mammals respond to urbanization? *Ecography* 43: 171-183. doi: 10.1111/ecog.04762
 
 ## Challenge Exercise
 
