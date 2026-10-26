@@ -1,0 +1,257 @@
+---
+title: "Block 1. Scale, kernels, and landscape pattern"
+subtitle: "multiScaleR workshop, The Wildlife Society Annual Conference, November 4, 2026"
+author: "Bill Peterman and Joseph Drake"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: show
+    code-tools: true
+    code-overflow: wrap
+    theme: cosmo
+    embed-resources: true
+    fig-width: 8
+    fig-height: 5.5
+execute:
+  eval: false
+  warning: false
+  message: false
+---
+
+# Getting started {#sec-start}
+
+Welcome to the `multiScaleR` workshop. Over four blocks you will estimate the spatial scale at which the landscape affects a species, check whether that estimate deserves your trust, extend the idea from "how much" of a land cover surrounds a site to "how it is arranged", and map the results. The worked example is the Cleveland Metroparks camera survey of Moll et al. (2020): 207 cameras, 14 mammal species, and an urban-to-rural gradient that runs from downtown Cleveland into forest and farmland.
+
+| Block | Time | Notebook | What you will do |
+|------------------|------------------|------------------|------------------|
+| 1 | 8:00 to 8:45 | `01_background_setup.qmd` | Lecture, then load and explore the data |
+| 2 | 9:00 to 9:45 | `02_core_workflow.qmd` | Estimate scales of effect for cat, chipmunk, and deer |
+| 3 | 10:00 to 10:45 | `03_landscape_pattern.qmd` | Landscape and surface metrics as covariates |
+| 4 | 11:00 to 11:45 | `04_maps_models_your_data.qmd` | Maps, occupancy models, and your own data |
+
+## How to use these notebooks
+
+Open `workshop.Rproj` in RStudio first; it sets the working directory so every path below resolves. Then open this notebook and run the chunks in order with the green arrow or `Ctrl+Enter` (`Cmd+Enter` on a Mac). Rendering is optional: every notebook has `eval: false` in its header so that clicking Render does not rerun the analyses. The two HTML versions of each notebook in `html/` show the full output and the code alone.
+
+Each notebook starts by sourcing `00_setup.R`, and Blocks 2 and 3 end by saving a small checkpoint. Start every block in a fresh R session (in RStudio, **Session \> Restart R**), then run its setup chunk, which loads the data and any checkpoint the block needs. A fresh session hands back the memory the previous block used. It also means a crash or a late arrival costs nothing, because every block starts the same way.
+
+## Before you start
+
+You need R 4.5 or later and six packages. Running `source("check_install.R")` installs anything missing and runs a short test.
+
+``` r
+install.packages(c("multiScaleR", "terra", "sf", "readxl", "MASS", "unmarked"))
+```
+
+::: callout-note
+## Requirements
+
+This workshop needs `multiScaleR` 0.7.2 or later, which is on CRAN; you do not need Rtools or a GitHub install. A laptop with 8 GB of RAM handles every step if you restart R at the start of each block; R then stays under about 3 GB. If RAM is an issue, close web browsers and other large programs during the workshop.
+:::
+
+```{r}
+#| label: setup
+#| eval: true
+source("00_setup.R")
+```
+
+**How to read the setup message:** the last line confirms the `multiScaleR` version and that 207 cameras and 14 species were loaded. The script also created the objects used in every block:
+
+| Object | Class | What it holds |
+|------------------------|------------------------|------------------------|
+| `cam_sf` | `sf` points | Camera locations, reprojected to the rasters' Albers equal-area projection (meters) |
+| `summer` | array, 207 x 18 x 14 | Weekly detections: cameras x weeks x species; `NA` where a camera did not run all week |
+| `site_data` | data frame | One row per camera: `n_weeks` of effort and total visits for each species |
+| `species` | data frame | Species codes used as column names in `site_data`, with common names |
+| `urb` | `SpatRaster` | PCA urbanization index (layer `urb_pca`) |
+| `landcover` | `SpatRaster` | Six-class land cover (layer `landcover`) |
+| `developed` | `SpatRaster` | Binary developed layer derived from `landcover` |
+| `pred_ext` | `SpatExtent` | The camera footprint plus 2.5 km, used for maps |
+
+# The study system {#sec-study}
+
+Moll et al. (2020) ran 207 camera traps across 18 reservations of the Cleveland Metroparks in northeast Ohio, from forested river valleys to parks surrounded by dense development. We use the summer 2016 season (June to September). Moll et al. modeled weekly visit frequency and occupancy for 14 species with hierarchical Bayesian models and a Gaussian smoothing kernel. We fit single-species models with `multiScaleR`, so our estimates will not match theirs exactly, but the kernel is the same idea and the patterns should be comparable.
+
+## Detections and effort
+
+```{r}
+#| label: effort
+dim(summer)                    # cameras, weeks, species
+summary(site_data$n_weeks)     # complete weeks of effort per camera
+```
+
+**How to read this output:** the detection array has 207 cameras, 18 weekly occasions, and 14 species. Cameras ran between 6 and 15 complete weeks (median 12). A camera that ran twice as long has twice the opportunity to record visits, so every count model in this workshop includes `offset(log(n_weeks))`. The offset turns the response into visits per week, which is the quantity Moll et al. modeled, and it keeps effort from masquerading as a landscape effect.
+
+```{r}
+#| label: detection-table
+detections <- data.frame(
+  species = species$name,
+  total_visits = colSums(visits),
+  cameras_detected = colSums(visits > 0)
+)
+detections[order(-detections$cameras_detected), ]
+```
+
+**How to read this table:** `total_visits` sums every detection across cameras and weeks; `cameras_detected` counts the cameras that recorded the species at least once. Deer and raccoon appear at nearly every camera. Opossum (147 cameras), chipmunk (90), and cat (84) fall between the extremes: common enough to model, patchy enough that the landscape has something to explain.
+
+```{r}
+#| label: fig-visit-rates
+#| fig-cap: "Visits per camera-week for the four focal species. Each distribution is right-skewed with many zeros, which is why we use negative binomial models."
+#| fig-width: 10
+#| fig-height: 3.5
+focal <- c(cat = "Domestic cat", chipmunk = "Eastern chipmunk",
+           deer = "White-tailed deer", opossum = "Virginia opossum")
+par(mfrow = c(1, 4), mar = c(4.5, 4, 2.5, 1))
+for (sp in names(focal)) {
+  hist(site_data[[sp]] / site_data$n_weeks, breaks = 25, col = "gray70", border = "white",
+       main = focal[sp], xlab = "Visits per week", ylab = "Cameras")
+}
+```
+
+## The PCA urbanization index
+
+Moll et al. summarized urbanization with a principal components analysis of three 30 m layers from the 2016 National Land Cover Database: developed vs undeveloped, forest vs non-forest, and proportion impervious surface. The first component explained about 61% of the variation, with loadings of 0.64 (developed), -0.32 (forest), and 0.70 (impervious). High values mark developed, impervious, treeless cells; low values mark forest.
+
+```{r}
+#| label: fig-urb
+#| fig-cap: "PCA urbanization index for the study area. Warm colors are developed and impervious; the darkest blue is forest. Black points are the 207 cameras; Lake Erie is masked."
+plot(urb, col = hcl.colors(50, "RdYlBu", rev = TRUE), main = "PCA urbanization index")
+points(vect(cam_sf), pch = 16, cex = 0.4)
+```
+
+```{r}
+#| label: urb-at-cameras
+urb_at_cameras <- extract(urb, vect(cam_sf))$urb_pca
+summary(urb_at_cameras)
+mean(urb_at_cameras == min(urb_at_cameras))   # share of cameras on the minimum value
+```
+
+**How to read this output:** 82% of the cameras sit on the index's minimum value, -1.08, which is what a forested, undeveloped cell scores. The cameras are in parks, so the camera cell itself says little; the variation that matters lies in the surrounding landscape. Keep this floor in mind for Block 3, where we measure how variable the index is around each camera as well as its average.
+
+## Land cover
+
+The PCA index blends development and forest into one axis. For landscape metrics we need categories, so we reclassified the 2016 Annual NLCD land cover into six classes and masked Lake Erie to match the PCA raster.
+
+```{r}
+#| label: landcover-classes
+landcover_classes
+```
+
+```{r}
+#| label: fig-landcover
+#| fig-cap: "Six-class land cover. Development dominates the lakeshore; forest follows the river valleys and park system; agriculture fills the southwest."
+plot(landcover, col = landcover_colors, type = "classes",
+     levels = landcover_classes$class, main = "Land cover", plg = list(cex = 0.8))
+points(vect(cam_sf), pch = 16, cex = 0.4)
+```
+
+```{r}
+#| label: landcover-at-cameras
+lc_at_cameras <- extract(landcover, vect(cam_sf))$landcover
+table(factor(lc_at_cameras, levels = landcover_classes$value, labels = landcover_classes$class))
+```
+
+**How to read this table:** 141 of the 207 cameras sit in forest cells, and most of the rest sit in developed open space (lawns, parks, golf courses) or wetland. Again, the camera cell is a poor summary of the landscape around it.
+
+::: callout-note
+## How the land-cover raster was built
+
+The raw NLCD file for Ohio is about 55 MB, so it is not distributed with the workshop. The chunk below documents the reclassification; it runs only if you place `NLCD30_OH_2016.tif` in `data/`.
+
+``` r
+nlcd <- crop(rast(file.path(DATA_DIR, "NLCD30_OH_2016.tif")), urb)
+rcl <- matrix(c(11, 1,  21, 2,  22, 3,  23, 3,  24, 3,
+                41, 4,  42, 4,  43, 4,
+                31, 5,  52, 5,  71, 5,  81, 5,  82, 5,
+                90, 6,  95, 6), ncol = 2, byrow = TRUE)
+lc <- as.int(classify(nlcd, rcl, others = NA))
+lc <- mask(lc, urb)                 # drop Lake Erie, as in the PCA raster
+names(lc) <- "landcover"
+```
+:::
+
+# Kernels, buffers, and sigma {#sec-kernels}
+
+A fixed buffer averages the landscape within a radius and ignores everything beyond it. A kernel instead weights each cell by its distance from the site, so nearby cells count most and the weight fades smoothly. `multiScaleR` estimates the kernel's scale parameter, **sigma**, as a model parameter alongside the regression coefficients. A small sigma means the species responds to its immediate surroundings; a large sigma means it integrates a broad landscape.
+
+```{r}
+#| label: fig-kernels
+#| fig-cap: "Gaussian kernels with sigma = 50, 250, and 1000 m. The dashed line marks the one-dimensional 90% distance (about 1.65 sigma), the first of the two distances summary() reports."
+#| fig-width: 10
+#| fig-height: 3.5
+cowplot::plot_grid(
+  plot_kernel(sigma = 50,   kernel = "gaussian", add_label = FALSE),
+  plot_kernel(sigma = 250,  kernel = "gaussian", add_label = FALSE),
+  plot_kernel(sigma = 1000, kernel = "gaussian", add_label = FALSE),
+  nrow = 1, labels = c("sigma = 50 m", "sigma = 250 m", "sigma = 1000 m"),
+  label_size = 11, hjust = -0.4
+)
+```
+
+Sigma can be interpreted as a 1D or 2D measure.
+
+```{r}
+#| label: kernel-distances
+sigmas <- c(50, 250, 1000)
+data.frame(
+  sigma       = sigmas,
+  distance_1d = sapply(sigmas, function(s) kernel_dist(sigma = s, kernel = "gaussian",
+                                                       dimension = "1d")),
+  radius_2d   = sapply(sigmas, function(s) kernel_dist(sigma = s, kernel = "gaussian",
+                                                       dimension = "2d"))
+)
+```
+
+**How to read this table:** `distance_1d` is the distance at which the Gaussian kernel's cumulative density, read along a line through the site, reaches 90% (about 1.65 sigma). Because cells surround a site on a plane, the circle that holds 90% of the total weight is wider: `radius_2d`, about 2.15 sigma, is the "scale90" that Moll et al. report, and it is the distance to use when you describe the area the kernel weights. On an unbounded plane, cells within the 1D distance carry only about 74% of the weight. Both distances describe the ideal kernel; in practice it is cut off at `max_D`, so keep `max_D` well beyond the 2D radius. `summary()` prints both for every fitted model, and `kernel_dist()` returns either one. For a Gaussian kernel, sigma itself equals Moll et al.'s "scale of maximal effect", the distance at which a ring of cells receives the most total weight, so sigma is the number to compare with their estimates.
+
+::: callout-note
+## Coming in multiScaleR 0.7.4: the 2D radius becomes the default
+
+This workshop runs on the 0.7.2 CRAN release, where `kernel_dist()`, `plot_kernel()`, and the first distance table in `summary()` use the 1D definition. From version 0.7.4, the 2D radius becomes the default everywhere: `kernel_dist()` returns it unless you ask for `dimension = "1d"`, `plot_kernel()` marks it, `summary()` prints the 2D table first and labels it as selected, and `opt_dist` follows that choice (`opt_dist_1d` and `opt_dist_2d` name each definition explicitly). Fitted sigma values do not change, and neither does any model; only the headline distance derived from sigma does.
+
+Why the change: the kernel weights cells on a plane, so the distance that describes its footprint is the radius of the circle holding 90% of the weight. The 1D distance encloses only about 74% of the planar weight and understates the footprint by about a quarter for a Gaussian kernel. The 2D radius is also the quantity other studies report. A buffer radius in a conventional multiscale analysis, Moll et al.'s "scale90", and the optimized radius of a hard-edged landscape metric in Block 3 are all planar radii, so a 2D default puts every scale in one table in the same currency. And because `max_D` is itself a planar cutoff, comparing the 2D radius with `max_D` is the honest check of whether the search window was wide enough.
+
+What it means today: the notebooks already report the 2D radius (`opt_dist_2d`) wherever a reader needs a distance, and they pass `dimension` to `kernel_dist()` explicitly, so every result reads the same on 0.7.2 and 0.7.4. In your own write-ups, always name the definition you report.
+:::
+
+::: callout-important
+## Where Block 3 goes
+
+A kernel-weighted mean asks how much of something surrounds a site. Landscape metrics ask how that land cover is arranged: how much edge, how many classes, how clumped. Surface metrics ask how variable a continuous surface is. Version \>= 0.7 of `multiScaleR` estimates the scale of all three, and Block 3 will demonstrate when the answer changes.
+:::
+
+# Quick reference {#sec-quickref}
+
+``` r
+## 1. Load packages, data, and helpers (every block starts here)
+source("00_setup.R")
+
+## 2. Effort and responses
+summary(site_data$n_weeks)          # complete weeks per camera; use offset(log(n_weeks))
+colSums(visits > 0)                 # cameras detecting each species
+
+## 3. Landscape layers
+plot(urb); plot(landcover)          # PCA index (continuous) and six-class land cover
+extract(urb, vect(cam_sf))          # values at the cameras
+
+## 4. Kernels
+plot_kernel(sigma = 250, kernel = "gaussian")
+kernel_dist(sigma = 250, kernel = "gaussian", dimension = "1d")   # along a line, 1.65x sigma
+kernel_dist(sigma = 250, kernel = "gaussian", dimension = "2d")   # radius of a circle, 2.15x sigma
+```
+
+| Function | Purpose |
+|------------------------------------|------------------------------------|
+| `plot_kernel()` | Draw a kernel's weight against distance for a given sigma |
+| `kernel_dist()` | Convert sigma to a distance: along a line (`dimension = "1d"`, the default through 0.7.3) or the radius of a circle (`dimension = "2d"`, the default from 0.7.4) |
+| `terra::extract()` | Read raster values at the camera locations |
+
+**Next:** `02_core_workflow.qmd`. See also `vignette("quickstart", package = "multiScaleR")` and `vignette("multiScaleR_Guide", package = "multiScaleR")`.
+
+# References {.unnumbered}
+
+Moll, R. J., J. D. Cepek, P. D. Lorch, P. M. Dennis, T. Robison, and R. A. Montgomery. 2020. At what spatial scale(s) do mammals respond to urbanization? *Ecography* 43:171-183. <https://doi.org/10.1111/ecog.04762>
+
+Peterman, W. E. 2026. multiScaleR: a generalizable approach for multiscale ecological modeling and scale of effect estimation. *Landscape Ecology* 41:8. <https://doi.org/10.1007/s10980-025-02267-x>

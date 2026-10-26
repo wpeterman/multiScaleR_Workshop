@@ -2,11 +2,14 @@
 .Rhistory
 .RData
 
-# Rendered output
+# Rendered output and render scratch files
 *_files/
+_full_*.qmd
+_full_*.html
 
 # OS files
 .DS_Store
 Thumbs.db
 .Rproj.user
 .positai
+Rplots.pdf

@@ -1,0 +1,437 @@
+---
+title: "Block 3. Beyond the mean: landscape pattern as covariates"
+subtitle: "multiScaleR workshop, The Wildlife Society Annual Conference, November 4, 2026"
+author: "Bill Peterman and Joseph Drake"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: show
+    code-tools: true
+    code-overflow: wrap
+    theme: cosmo
+    embed-resources: true
+    fig-width: 8
+    fig-height: 5
+execute:
+  eval: false
+  warning: false
+  message: false
+---
+
+::: callout-tip
+## Start fresh
+Restart R before you begin (RStudio: **Session > Restart R**), then run the setup chunk below. It reloads the data and the three fits you saved at the end of Block 2, and the fresh session returns the memory Block 2 used.
+:::
+
+```{r}
+#| label: setup
+#| eval: true
+source("00_setup.R")
+if (!exists("opt_cat")) load_checkpoint("block2")   # opt_cat, opt_chip_screen, opt_deer
+```
+
+Block 2 asked how much urbanization surrounds a camera. That is a kernel-weighted mean, and it is often the right question. But species also respond to how a landscape is put together: how much edge there is, how many cover types meet, how clumped the forest is, or how variable a continuous surface is. Version 0.7 of `multiScaleR` treats each of these as a covariate with its own estimated scale. This block works through two examples where the answer changes: opossum, where landscape configuration explains visits that urbanization does not, and deer, where the variability of urbanization beats its average.
+
+# Start the slow step now {#sec-start-maps}
+
+The chunk below computes four land-cover metrics at every cell of the study area, about 3 million cells, which takes a minute or two. Start it now and read on while it runs. The next section explains the functions it uses, and the opossum section looks at the maps.
+
+```{r}
+#| label: metric-maps-compute
+lc_view <- crop(landcover, pred_ext)
+metric_maps <- kernel_scale.raster(
+  lc_view,
+  scale_vars = msr_vars(
+    `Edge density (m/ha)` = landscape_var("landcover", metric = "ed",    radius = 500),
+    `Aggregation index`   = landscape_var("landcover", metric = "ai",    radius = 500),
+    `Shannon diversity`   = landscape_var("landcover", metric = "shdi",  radius = 500),
+    `Forest cover (%)`    = landscape_var("landcover", metric = "pland", radius = 500, class = 4)
+  ),
+  verbose = FALSE
+)                                                             # about 1.5 min
+```
+
+# From raster layers to covariates {#sec-vars}
+
+Until now, each raster layer became one kernel-weighted covariate with the same name. With landscape metrics, one layer can yield several covariates: the same land-cover map gives forest percentage, edge density, and diversity, each at its own scale. `msr_vars()` names those covariates explicitly and says how each is derived.
+
+```{r}
+#| label: vars-example
+example_vars <- msr_vars(
+  urb_mean     = kernel_var("urb_pca"),
+  urb_sq       = surface_var("urb_pca", metric = "sq", weighted = TRUE),
+  forest_pland = landscape_var("landcover", metric = "pland", class = 4),
+  lc_ed_500    = landscape_var("landcover", metric = "ed", radius = 500)
+)
+example_vars
+```
+
+**How to read this output:** each row is a model covariate. `source` is the raster layer it comes from; two covariates come from `urb_pca` and two from `landcover`. `type` says how it is computed. A `radius` of `NA` with `optimize = TRUE` means the scale will be estimated; `lc_ed_500` has a fixed 500 m radius and no scale parameter. `weighted = TRUE` marks the kernel-weighted surface metric. `class` names the focal class for class-level metrics (4 is forest), and `base` sets the logarithm base for the diversity and entropy metrics.
+
+| Specification | Raster | Computes | Scale parameter |
+|---------------|--------|----------|-----------------|
+| `kernel_var()` | Continuous or binary | Distance-weighted mean | sigma (smooth) |
+| `landscape_var()` | Categorical (integer classes) | Landscape metric within a circular buffer | radius (hard edge), or fixed |
+| `surface_var()` | Continuous | Surface texture: roughness, shape, slope | radius (hard edge), or sigma with `weighted = TRUE` |
+
+`landscape_var()` supports 25 metrics in five families, all matching the FRAGSTATS definitions used by the `landscapemetrics` package. The ones we use here:
+
+| Code | Metric | Family | Reads as |
+|------|--------|--------|----------|
+| `pland` | Percentage of landscape (needs `class`) | Class-level | How much forest is in the buffer |
+| `ed` | Edge density (m/ha) | Edge | How much boundary between classes |
+| `ai` | Aggregation index | Adjacency | How clumped the classes are |
+| `shdi` | Shannon diversity | Composition | How many classes, how evenly mixed |
+| `ent`, `mutinf` | Marginal entropy, mutual information | Information theory | Composition and configuration, separated |
+| `contag` | Contagion | Adjacency | Overall clumping across class pairs |
+
+See `vignette("landscape_metric_covariates", package = "multiScaleR")` for the full table and `vignette("surface_metric_covariates", package = "multiScaleR")` for the surface metrics.
+
+One link back to Block 2: a kernel-weighted mean of a 0/1 layer is a distance-weighted proportion, the kernel analog of `pland`. The appendix fits one for cats; a plain developed layer beats the PCA index by about 5 AICc at a similar 50 to 60 m scale.
+
+# Opossum: categorical landscape metrics {#sec-opossum}
+
+Virginia opossums are generalists often described as edge species. Start with the Block 2 question.
+
+```{r}
+#| label: opp-pca
+ki_opp_pca <- kernel_prep(cam_sf, urb, max_D = 2000, kernel = "gaussian",
+                          store_cell_data = FALSE, verbose = FALSE)
+dat_opp_pca <- data.frame(visits = site_data$opossum, n_weeks = site_data$n_weeks,
+                          ki_opp_pca$kernel_dat)
+mod_opp_pca <- glm.nb(visits ~ urb_pca + offset(log(n_weeks)), data = dat_opp_pca)
+opt_opp_pca <- multiScale_optim(mod_opp_pca, ki_opp_pca)
+
+summary(opt_opp_pca)$opt_scale
+coef(summary(opt_opp_pca$opt_mod))
+```
+
+**How to read this output:** the scale is poorly defined (the standard error is nearly as large as sigma) and the urbanization effect is weak. By this analysis alone, opossums barely respond to urbanization. Hold that thought.
+
+## Look before you model: metric maps at a fixed radius
+
+`kernel_scale.raster()` computes a landscape metric at every cell without a fitted model; that is what the chunk at the top of this block did. Maps at one radius show what each metric picks out before you commit to one.
+
+```{r}
+#| label: fig-metric-maps
+#| fig-cap: "Four land-cover metrics computed within 500 m of every cell. Edge density and aggregation index are near mirror images; Shannon diversity tracks them; forest cover follows the park system."
+#| fig-width: 10
+#| fig-height: 8
+plot(metric_maps, nc = 2)
+```
+
+**How to read these maps:** bright cells score high. Edge density is high where many small patches meet, which is also where aggregation is low, so the two maps are close to inverses. Diversity rises wherever several classes share a buffer. Forest cover is highest along the river valleys. Metrics that look alike on a map will be nearly collinear in a model.
+
+## Screen the candidates at the cameras
+
+Before optimizing, compute each candidate at a fixed radius at the cameras and check how much they overlap.
+
+```{r}
+#| label: opp-screen
+screen_vars <- msr_vars(
+  ed     = landscape_var("landcover", metric = "ed",     radius = 500),
+  ai     = landscape_var("landcover", metric = "ai",     radius = 500),
+  shdi   = landscape_var("landcover", metric = "shdi",   radius = 500),
+  ent    = landscape_var("landcover", metric = "ent",    radius = 500, base = 2),
+  mutinf = landscape_var("landcover", metric = "mutinf", radius = 500, base = 2),
+  forest = landscape_var("landcover", metric = "pland",  radius = 500, class = 4)
+)
+ki_screen <- kernel_prep(cam_sf, landcover, max_D = 560, scale_vars = screen_vars,
+                         verbose = FALSE)
+round(cor(ki_screen$kernel_dat), 2)
+```
+
+**How to read this matrix:** edge density and aggregation index correlate at about -1, and Shannon diversity and marginal entropy at 1: within a buffer they measure the same thing, so fitting both, or comparing them as if they were distinct hypotheses, adds nothing. Mutual information (configuration after composition is removed) and forest cover overlap less with edge density. We carry forward one metric per idea: forest cover for amount, edge density for configuration.
+
+## Optimize the edge-density radius
+
+Leaving out `radius` tells `multiScaleR` to estimate it. At each candidate radius the metric is recomputed for every camera, so this takes about half a minute rather than a second.
+
+```{r}
+#| label: opp-ed
+ki_opp_ed <- kernel_prep(cam_sf, landcover, max_D = 2000, kernel = "gaussian",
+                         scale_vars = msr_vars(lc_ed = landscape_var("landcover", metric = "ed")),
+                         verbose = FALSE)
+dat_opp_ed <- data.frame(visits = site_data$opossum, n_weeks = site_data$n_weeks,
+                         ki_opp_ed$kernel_dat)
+mod_opp_ed <- glm.nb(visits ~ lc_ed + offset(log(n_weeks)), data = dat_opp_ed)
+system.time(opt_opp_ed <- multiScale_optim(mod_opp_ed, ki_opp_ed))
+summary(opt_opp_ed)
+```
+
+**How to read the `summary()` output for a hard radius:** the scale is now a buffer radius, not a kernel sigma, and it has no standard error. As the radius grows, cells enter the buffer one ring at a time, so the likelihood changes in small steps, and a Hessian-based standard error computed on a staircase is meaningless. The effective distance for a hard radius is the radius itself. Get the interval from the profile likelihood instead:
+
+```{r}
+#| label: opp-ed-profile
+summary(opt_opp_ed, profile = TRUE)$opt_scale
+```
+
+```{r}
+#| label: fig-opp-ed-profile
+#| fig-cap: "AICc across buffer radius for opossum edge density: a broad valley from roughly 450 to 950 m. The dashed line marks the optimized radius. The axis is labeled sigma; for a hard-radius covariate, read it as the radius."
+plot(profile_sigma(opt_opp_ed, n_pts = 12))
+```
+
+Edge density within about 555 m (profile 95% CI 437 to 958 m) predicts opossum visits strongly: each SD of edge density multiplies visits by about 1.7. Moll et al. (2020) placed the opossum's scale of maximal effect for urbanization at 249 m, with a wide interval (70 to 1427 m).
+
+## Amount or configuration?
+
+Edge density rises as forest is broken up, so is this really a forest-amount effect in disguise? Fit forest cover alone, then both together, each with its own radius.
+
+```{r}
+#| label: opp-amount
+amount_vars <- msr_vars(
+  forest_pland = landscape_var("landcover", metric = "pland", class = 4),
+  lc_ed        = landscape_var("landcover", metric = "ed")
+)
+ki_opp_amt <- kernel_prep(cam_sf, landcover, max_D = 2000, kernel = "gaussian",
+                          scale_vars = amount_vars, verbose = FALSE)
+dat_opp_amt <- data.frame(visits = site_data$opossum, n_weeks = site_data$n_weeks,
+                          ki_opp_amt$kernel_dat)
+
+mod_opp_forest <- glm.nb(visits ~ forest_pland + offset(log(n_weeks)), data = dat_opp_amt)
+opt_opp_forest <- multiScale_optim(mod_opp_forest, ki_opp_amt)            # about 30 s
+
+mod_opp_both <- glm.nb(visits ~ forest_pland + lc_ed + offset(log(n_weeks)), data = dat_opp_amt)
+if (run_slow_fits) {
+  opt_opp_both <- multiScale_optim(mod_opp_both, ki_opp_amt)              # about 1.5 min
+} else {
+  opt_opp_both <- readRDS(file.path(CHECKPOINT_DIR, "block3.rds"))$opt_opp_both          # our fit from that call
+}
+```
+
+::: callout-tip
+## The two joint fits load from our checkpoint
+
+Two fits in this block take about 1.5 minutes each: this one and the deer mean + roughness model. By default the notebook loads our saved fits, produced by the same call on the same data, so the block keeps moving. To refit them live, run `run_slow_fits <- TRUE` after the setup chunk. The saved fits were lightened (see the checkpoint section), so they can be summarized and compared but not profiled.
+:::
+
+```{r}
+#| label: opp-compare
+summary(opt_opp_both)$opt_scale
+coef(summary(opt_opp_both$opt_mod))
+
+aic_tab(list(opt_opp_pca, opt_opp_forest, opt_opp_ed, opt_opp_both),
+        mod_names = c("Urbanization (kernel mean)", "Forest cover", "Edge density",
+                      "Forest cover + edge density"))
+```
+
+**How to read the `aic_tab()` output:** `K` counts every estimated parameter, including each scale and the negative binomial dispersion, and `AICc` corrects AIC for sample size. `Delta_AICc` is the distance from the best model; a difference above about 2 is meaningful, and above 4 is strong. `aic_tab()` refuses to compare models fit to different cameras, so every comparison in this block uses all 207. In the joint model, edge density keeps a strong positive effect while forest cover shrinks toward zero and loses significance. Edge density alone is the best model; adding forest cover costs more in parameters than it returns in fit. Urbanization, the covariate that looked weak at the start, is far behind.
+
+::: callout-note
+## Interpreting the opossum result
+
+Opossums track how the landscape is arranged, not how urban it is. Within about half a kilometer of a camera, more boundary between land-cover types means more opossum visits, whatever the total amount of forest. That fits a generalist that forages along forest edges, lawns, and wetland margins. A study that measured only urbanization, or only forest cover, would have missed it.
+:::
+
+::: callout-warning
+## Fragile metrics and the sample-size guard
+
+Some metrics are undefined in some buffers: contagion needs at least two classes, interspersion (`iji`) needs three, and `clumpy` is `NA` where the focal class is absent or fills the whole buffer. At small radii many cameras sit in a single class. Since version 0.7.1, `multiScale_optim()` rejects any candidate scale that would make the covariate undefined at a camera, so every likelihood is compared on the same sample. Confirm with `diagnostics(opt)$sample_size`, and screen fragile metrics at a few fixed radii before optimizing them.
+:::
+
+```{r}
+#| label: opp-sample
+diagnostics(opt_opp_ed)$sample_size[c("fitted_n", "prepared_n")]
+```
+
+# Deer: continuous surface metrics {#sec-deer}
+
+In Block 2, deer responded positively to mean urbanization at a sigma of about 750 m. The PCA index sits on its minimum in forest and rises only where development appears, so a neighborhood can have a moderate mean in two ways: a uniform, lightly developed suburb, or a mosaic of forest and dense development. Surface metrics tell those apart. `sq` is the standard deviation of the surface within the neighborhood, its roughness.
+
+With `weighted = TRUE`, each cell's contribution to the roughness is weighted by the same Gaussian kernel used for means, and sigma is estimated with a smooth likelihood and a standard error.
+
+```{r}
+#| label: deer-sq
+ki_deer_sq <- kernel_prep(cam_sf, urb, max_D = 3000, kernel = "gaussian",
+                          scale_vars = msr_vars(urb_sq = surface_var("urb_pca", metric = "sq",
+                                                                     weighted = TRUE)),
+                          verbose = FALSE)
+dat_deer_sq <- data.frame(visits = site_data$deer, n_weeks = site_data$n_weeks,
+                          ki_deer_sq$kernel_dat)
+mod_deer_sq <- glm.nb(visits ~ urb_sq + offset(log(n_weeks)), data = dat_deer_sq)
+opt_deer_sq <- multiScale_optim(mod_deer_sq, ki_deer_sq)                  # about 30 s
+summary(opt_deer_sq)
+```
+
+```{r}
+#| label: deer-sq-compare
+aic_tab(list(opt_deer, opt_deer_sq),
+        mod_names = c("Mean urbanization", "Roughness, kernel-weighted"))
+```
+
+**How to read these results:** sigma is about 300 m with a standard error of 53 m, and roughness beats mean urbanization by about 19 AICc, a decisive margin. `summary()` prints both distances from Block 1: 494 m along a line (1D) and 644 m as a radius (2D), the circle that holds 90% of the kernel's weight. The weighted form gives you a standard error and a smooth profile. Leaving out `weighted = TRUE` computes the same roughness inside a hard-edged buffer and optimizes its radius, as the landscape metrics do; use that form when a fixed buffer matches your question or another study.
+
+::: {.callout-note collapse="true"}
+## Optional: the hard-radius version (about 20 s)
+
+```{r}
+#| label: deer-sq-hard
+ki_deer_sqr <- kernel_prep(cam_sf, urb, max_D = 3000, kernel = "gaussian",
+                           scale_vars = msr_vars(urb_sq_r = surface_var("urb_pca", metric = "sq")),
+                           verbose = FALSE)
+dat_deer_sqr <- data.frame(visits = site_data$deer, n_weeks = site_data$n_weeks,
+                           ki_deer_sqr$kernel_dat)
+mod_deer_sqr <- glm.nb(visits ~ urb_sq_r + offset(log(n_weeks)), data = dat_deer_sqr)
+opt_deer_sqr <- multiScale_optim(mod_deer_sqr, ki_deer_sqr)               # about 20 s
+summary(opt_deer_sqr)$opt_scale
+
+aic_tab(list(opt_deer, opt_deer_sq, opt_deer_sqr),
+        mod_names = c("Mean urbanization", "Roughness, kernel-weighted",
+                      "Roughness, hard radius"))
+```
+
+The hard radius lands at about 715 m, close to the 644 m 2D radius of the weighted kernel, and the model is about 18 AICc better than the mean. The two forms describe the same neighborhood in different units.
+:::
+
+## Mean and roughness together
+
+The two covariates come from one layer, so they are correlated. The joint model asks which one carries the signal once the other is in the model.
+
+```{r}
+#| label: deer-both
+ki_deer_both <- kernel_prep(cam_sf, urb, max_D = 3000, kernel = "gaussian",
+                            scale_vars = msr_vars(
+                              urb_mean = kernel_var("urb_pca"),
+                              urb_sq   = surface_var("urb_pca", metric = "sq", weighted = TRUE)),
+                            verbose = FALSE)
+dat_deer_both <- data.frame(visits = site_data$deer, n_weeks = site_data$n_weeks,
+                            ki_deer_both$kernel_dat)
+mod_deer_both <- glm.nb(visits ~ urb_mean + urb_sq + offset(log(n_weeks)), data = dat_deer_both)
+if (run_slow_fits) {
+  opt_deer_both <- multiScale_optim(mod_deer_both, ki_deer_both)          # about 1.5 min
+} else {
+  opt_deer_both <- readRDS(file.path(CHECKPOINT_DIR, "block3.rds"))$opt_deer_both        # our fit from that call
+}
+
+summary(opt_deer_both)$opt_scale
+coef(summary(opt_deer_both$opt_mod))
+cor(opt_deer$opt_mod$model$urb_pca, opt_deer_sq$opt_mod$model$urb_sq)    # mean vs roughness at their optima
+```
+
+::: callout-note
+## Interpreting the deer result
+
+With both in the model, mean urbanization loses its effect and roughness keeps it. Deer visits track where development and forest interleave within a few hundred meters, not how developed the surroundings are on average. That matches deer as an edge species that forages in suburban yards and beds in the adjacent woods. Treat the split with some care: mean and roughness correlate at about 0.85 at their optimal scales, because in this index roughness mostly appears where development meets forest. Block 4 shows why the distinction still matters: the two models draw very different maps.
+:::
+
+::: callout-note
+## Discussion (3 minutes)
+
+For a species you work on, is "how much" or "how mixed" the better hypothesis? Which layer would you use, and would you expect its scale to be smaller or larger than the scale for the mean?
+:::
+
+# Save a checkpoint {#sec-checkpoint}
+
+Landscape and surface-metric fits keep every extracted cell, tens of megabytes each. `lighten_fit()` drops the cells and keeps everything `summary()`, `aic_tab()`, and `kernel_scale.raster()` need. Profiling and refitting need the full object, so keep the originals in your session.
+
+```{r}
+#| label: checkpoint
+save_checkpoint("block3",
+                opt_opp_pca,
+                opt_opp_ed     = lighten_fit(opt_opp_ed),
+                opt_opp_forest = lighten_fit(opt_opp_forest),
+                opt_opp_both   = lighten_fit(opt_opp_both),
+                opt_deer_sq    = lighten_fit(opt_deer_sq),
+                opt_deer_both  = lighten_fit(opt_deer_both))
+```
+
+# Optional: for fast finishers {#sec-appendix}
+
+## A kernel mean of a binary layer: cats and developed land
+
+A kernel-weighted mean of a 0/1 layer is a distance-weighted proportion: the kernel analog of `pland`. Cats responded to the PCA index in Block 2; does a plain developed layer do as well?
+
+```{r}
+#| label: cat-developed
+ki_cat_dev <- kernel_prep(cam_sf, developed, max_D = 1000, kernel = "gaussian",
+                          scale_vars = msr_vars(developed = kernel_var("developed")),
+                          store_cell_data = FALSE, verbose = FALSE)
+dat_cat_dev <- data.frame(visits = site_data$cat, n_weeks = site_data$n_weeks,
+                          ki_cat_dev$kernel_dat)
+mod_cat_dev <- glm.nb(visits ~ developed + offset(log(n_weeks)), data = dat_cat_dev)
+opt_cat_dev <- multiScale_optim(mod_cat_dev, ki_cat_dev)
+
+summary(opt_cat_dev)$opt_scale
+aic_tab(list(opt_cat, opt_cat_dev),
+        mod_names = c("PCA index, kernel mean", "Developed, kernel mean"))
+```
+
+**How to read this output:** the proportion of developed land, weighted within a similar 50 to 60 m kernel, fits better than the composite PCA index by about 5 AICc. A single land-cover class can be a sharper covariate than a composite index when the species responds to one thing.
+
+## Decompose the PCA index for deer
+
+The IALE version of this workshop split the PCA index into its developed and forest components, each with its own sigma. With screened starts and lean mode it runs in under a minute.
+
+```{r}
+#| label: appendix-decompose
+forest <- mask(as.int(landcover == 4), landcover); names(forest) <- "forest"
+ki_deer_nlcd <- kernel_prep(cam_sf, c(developed, forest), max_D = 5000, kernel = "gaussian",
+                            store_cell_data = FALSE, verbose = FALSE)
+dat_deer_nlcd <- data.frame(visits = site_data$deer, n_weeks = site_data$n_weeks,
+                            ki_deer_nlcd$kernel_dat)
+mod_deer_nlcd <- glm.nb(visits ~ developed + forest + offset(log(n_weeks)), data = dat_deer_nlcd)
+opt_deer_nlcd <- multiScale_optim(mod_deer_nlcd, ki_deer_nlcd, start_strategy = "screen")
+
+summary(opt_deer_nlcd)$opt_scale
+coef(summary(opt_deer_nlcd$opt_mod))
+cor(opt_deer_nlcd$opt_mod$model$developed, opt_deer_nlcd$opt_mod$model$forest)
+aic_tab(list(opt_deer_sq, opt_deer_nlcd),
+        mod_names = c("Roughness, kernel-weighted", "Developed + forest"))
+```
+
+Look at three things. The forest scale runs to the edge of the 5 km window, the developed scale is nearly as broad, and both standard errors exceed the estimates. At those scales the proportions of developed land and forest are near mirror images (r of about -0.97), and the forest coefficient is positive even though forest alone has a negative effect on deer; when two covariates are this collinear, neither coefficient can be read on its own. And roughness still wins, by about 11 AICc.
+
+# Quick reference {#sec-quickref}
+
+```r
+## 1. Define covariates from source layers
+vars <- msr_vars(
+  urb_mean = kernel_var("urb_pca"),                                   # smooth sigma
+  lc_ed    = landscape_var("landcover", metric = "ed"),               # optimized radius
+  forest   = landscape_var("landcover", metric = "pland", class = 4, radius = 500),  # fixed
+  urb_sq   = surface_var("urb_pca", metric = "sq", weighted = TRUE)   # smooth sigma
+)
+
+## 2. Prepare (keep cell data for landscape and surface metrics)
+ki  <- kernel_prep(cam_sf, c(urb, landcover), max_D = 2000, scale_vars = vars)
+round(cor(ki$kernel_dat), 2)                 # screen for redundant metrics
+
+## 3. Fit and optimize as before
+dat <- data.frame(visits = site_data$opossum, n_weeks = site_data$n_weeks, ki$kernel_dat)
+opt <- multiScale_optim(glm.nb(visits ~ lc_ed + offset(log(n_weeks)), data = dat), ki)
+
+## 4. Interpret
+summary(opt, profile = TRUE)                 # hard radii: profile interval only
+diagnostics(opt)$sample_size                 # same cameras throughout?
+aic_tab(list(opt_a, opt_b), mod_names = c("a", "b"))
+
+## Metric maps with no model
+kernel_scale.raster(landcover, scale_vars = msr_vars(
+  ed_500 = landscape_var("landcover", metric = "ed", radius = 500)))
+```
+
+| Function | Purpose |
+|----------|---------|
+| `msr_vars()` | Collect named covariate specifications |
+| `kernel_var()` | Distance-weighted mean of a layer |
+| `landscape_var()` | Landscape metric of a categorical layer, fixed or optimized radius |
+| `surface_var()` | Texture of a continuous layer; `weighted = TRUE` for a smooth sigma |
+| `kernel_scale.raster()` | Metric surfaces with or without a fitted model |
+| `aic_tab()` | Compare fits across covariate types on the same sample |
+
+**Next:** `04_maps_models_your_data.qmd`. See also `vignette("landscape_metric_covariates", package = "multiScaleR")` and `vignette("surface_metric_covariates", package = "multiScaleR")`.
+
+# References {.unnumbered}
+
+Cushman, S. A., K. McGarigal, and M. C. Neel. 2008. Parsimony in landscape metrics: strength, universality, and consistency. *Ecological Indicators* 8:691-703. <https://doi.org/10.1016/j.ecolind.2007.12.002>
+
+Hesselbarth, M. H. K., M. Sciaini, K. A. With, K. Wiegand, and J. Nowosad. 2019. landscapemetrics: an open-source R tool to calculate landscape metrics. *Ecography* 42:1648-1657. <https://doi.org/10.1111/ecog.04617>
+
+McGarigal, K., S. Tagil, and S. A. Cushman. 2009. Surface metrics: an alternative to patch metrics for the quantification of landscape structure. *Landscape Ecology* 24:433-450. <https://doi.org/10.1007/s10980-009-9327-y>
+
+Moll, R. J., J. D. Cepek, P. D. Lorch, P. M. Dennis, T. Robison, and R. A. Montgomery. 2020. At what spatial scale(s) do mammals respond to urbanization? *Ecography* 43:171-183. <https://doi.org/10.1111/ecog.04762>
+
+Nowosad, J., and T. F. Stepinski. 2019. Information theory as a consistent framework for quantification and classification of landscape patterns. *Landscape Ecology* 34:2091-2101. <https://doi.org/10.1007/s10980-019-00830-x>

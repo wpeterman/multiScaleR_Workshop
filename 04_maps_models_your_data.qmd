@@ -1,0 +1,333 @@
+---
+title: "Block 4. Maps, other models, and your data"
+subtitle: "multiScaleR workshop, The Wildlife Society Annual Conference, November 4, 2026"
+author: "Bill Peterman and Joseph Drake"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: show
+    code-tools: true
+    code-overflow: wrap
+    theme: cosmo
+    embed-resources: true
+    fig-width: 8
+    fig-height: 5
+execute:
+  eval: false
+  warning: false
+  message: false
+---
+
+::: callout-tip
+## Start fresh
+Restart R before you begin (RStudio: **Session > Restart R**), then run the setup chunk below. It reloads the data and the fits you saved at the end of Blocks 2 and 3, and the fresh session returns the memory Block 3 used.
+:::
+
+```{r}
+#| label: setup
+#| eval: true
+source("00_setup.R")
+if (!exists("opt_cat"))    load_checkpoint("block2")   # opt_cat, opt_chip_screen, opt_deer
+if (!exists("opt_opp_ed")) load_checkpoint("block3")   # opossum and deer metric fits
+```
+
+An estimated scale of effect becomes useful to managers when it becomes a map. This block projects the fitted models across the study area, shows how a model can fit the cameras well and still map nonsense away from them, runs the same workflow with an occupancy model, and then turns the time over to your own data.
+
+# From scales to maps {#sec-maps}
+
+`kernel_scale.raster()` applies a fitted model's kernels to every cell of a raster, using fast Fourier transforms for kernel means and the same buffer calculations used at the cameras for landscape and surface metrics. With `scale_center = TRUE`, the smoothed layers are standardized with the means and SDs from the model data, so they can go straight into `terra::predict()`.
+
+We crop to the camera footprint plus 2.5 km (`pred_ext`) to keep memory in check; projecting a hard-radius landscape metric over the full study area can use about 3 GB.
+
+## Domestic cat: a fine-grained map
+
+```{r}
+#| label: cat-project
+urb_view <- crop(urb, pred_ext)
+
+cat_layers <- kernel_scale.raster(urb_view, multiScaleR = opt_cat,
+                                  scale_center = TRUE, clamp = TRUE, verbose = FALSE)
+cat_layers
+```
+
+**How to read this output:** there are two layers. `urb_pca` is urbanization smoothed with the cat kernel (sigma of about 57 m) and standardized. `n_weeks` is a constant layer that supplies the offset: `kernel_scale.raster()` sets a log offset's variable to 1 by default, so predictions are visits per camera-week. To predict a different effort, pass `offset_values`, for example `offset_values = c(n_weeks = 12)` for a 12-week season.
+
+```{r}
+#| label: fig-cat-map
+#| fig-cap: "Predicted domestic cat visits per camera-week, clamped to the range at the cameras. Within the park system, visits concentrate where parks meet neighborhoods; the entire developed core sits at the clamped maximum."
+cat_pred <- predict(cat_layers, opt_cat$opt_mod, type = "response")
+plot(cat_pred, col = hcl.colors(50, "YlOrRd", rev = TRUE),
+     main = "Domestic cat: visits per week")
+points(vect(cam_sf), pch = 16, cex = 0.3)
+```
+
+## Clamping: do not predict beyond your data
+
+`clamp = TRUE` limits each smoothed covariate to the range observed at the cameras before prediction. It matters most for small scales, where smoothing leaves local extremes intact.
+
+```{r}
+#| label: cat-clamp
+cat_layers_raw <- kernel_scale.raster(urb_view, multiScaleR = opt_cat,
+                                      scale_center = TRUE, clamp = FALSE, verbose = FALSE)
+train_range <- range(opt_cat$opt_mod$model$urb_pca)
+beyond <- values(cat_layers_raw$urb_pca, mat = FALSE) > train_range[2]
+round(100 * mean(beyond, na.rm = TRUE), 1)          # % of cells more urban than any camera
+
+cat_pred_raw <- predict(cat_layers_raw, opt_cat$opt_mod, type = "response")
+rbind(unclamped = global(cat_pred_raw, "max", na.rm = TRUE)[1, 1],
+      clamped   = global(cat_pred,     "max", na.rm = TRUE)[1, 1])
+```
+
+**How to read this output:** about a quarter of the mapped cells (25%) are more urban, at the cat's 57 m scale, than the most urban camera; every one of them is extrapolation. Without clamping, the log link lets predictions there climb to about 74 visits per week. Clamping caps them near 2.9, the value predicted for the most urban camera. That is conservative, but the model still assigns its maximum to the whole city core, where no camera sat; clamping limits extrapolation in covariate space, not in geographic or ecological space.
+
+## Opossum: mapping a landscape metric
+
+The same call projects a landscape-metric model. Edge density is recomputed within the fitted radius (about 555 m) around every cell.
+
+```{r}
+#| label: fig-opp-map
+#| fig-cap: "Predicted opossum visits per camera-week from the edge-density model. Visits are highest where many land-cover types meet: the agricultural and forest mosaic to the southwest and the edges of the park system."
+lc_view <- crop(landcover, pred_ext)
+opp_layers <- kernel_scale.raster(lc_view, multiScaleR = opt_opp_ed,
+                                  scale_center = TRUE, clamp = TRUE, verbose = FALSE)
+opp_pred <- predict(opp_layers, opt_opp_ed$opt_mod, type = "response")
+plot(opp_pred, col = hcl.colors(50, "YlGnBu", rev = TRUE),
+     main = "Virginia opossum: visits per week")
+points(vect(cam_sf), pch = 16, cex = 0.3)
+```
+
+## Deer: two good models, two different maps
+
+In Block 3, roughness of the urbanization surface beat mean urbanization by 19 AICc for deer. At the cameras both models fit reasonably well. Away from the cameras they disagree completely.
+
+```{r}
+#| label: fig-deer-maps
+#| fig-cap: "Predicted deer visits per camera-week from mean urbanization (left) and from roughness of urbanization (right), both clamped to the range at the cameras."
+#| fig-width: 11
+#| fig-height: 5
+deer_mean_pred <- predict(
+  kernel_scale.raster(urb_view, multiScaleR = opt_deer, scale_center = TRUE,
+                      clamp = TRUE, verbose = FALSE),
+  opt_deer$opt_mod, type = "response")
+deer_sq_pred <- predict(
+  kernel_scale.raster(urb_view, multiScaleR = opt_deer_sq, scale_center = TRUE,
+                      clamp = TRUE, verbose = FALSE),
+  opt_deer_sq$opt_mod, type = "response")
+
+par(mfrow = c(1, 2))
+plot(deer_mean_pred, col = hcl.colors(50, "Greens", rev = TRUE),
+     main = "Deer ~ mean urbanization")
+points(vect(cam_sf), pch = 16, cex = 0.3)
+plot(deer_sq_pred, col = hcl.colors(50, "Greens", rev = TRUE),
+     main = "Deer ~ roughness of urbanization")
+points(vect(cam_sf), pch = 16, cex = 0.3)
+```
+
+**How to read these maps:** the mean model says deer increase with urbanization, so it paints downtown Cleveland, where no camera sits and no deer herd lives, as the best deer habitat in the region. The roughness model puts deer where development and forest interleave: park edges, river corridors, and wooded suburbs, and it predicts few deer in the uniform urban core. Both maps are clamped, so neither is extrapolating in covariate space; the mean model is extrapolating in ecological space, applying a relationship learned in parks to places unlike any park.
+
+::: callout-important
+## The lesson
+
+A model can fit the cameras well and still fail as a map. Before you hand a prediction surface to a manager, check it against what you know about the species, and prefer covariates that describe the mechanism. Choosing the right scale matters; choosing the right *kind* of landscape covariate can matter just as much.
+:::
+
+# Reporting a multiscale result {#sec-report}
+
+A reader needs the scale, its uncertainty, a distance they can picture, and the effect size on an interpretable scale. The helper below collects them for any fit.
+
+```{r}
+#| label: report
+scale_report <- function(fit, label) {
+  s  <- summary(fit, profile = TRUE)
+  cf <- coef(summary(fit$opt_mod))
+  covs <- rownames(s$opt_scale)
+  data.frame(
+    model        = label,
+    covariate    = covs,
+    scale_type   = ifelse(covs %in% s$hard_radius, "radius", "sigma"),
+    scale_m      = round(s$opt_scale$Mean),
+    lower_95     = round(s$opt_scale[["2.5%"]]),
+    upper_95     = round(s$opt_scale[["97.5%"]]),
+    radius_90_m  = round(s$opt_dist_2d$Mean),
+    beta_per_SD  = round(cf[covs, "Estimate"], 2),
+    multiplier   = round(exp(cf[covs, "Estimate"]), 2),
+    row.names    = NULL
+  )
+}
+
+rbind(scale_report(opt_cat, "Cat"),
+      scale_report(opt_deer, "Deer, mean"))
+```
+
+**How to read this table:** `scale_type` says whether the scale is a kernel sigma or a hard radius. The interval comes from the profile likelihood, which is valid for both. The deer interval runs to 3000 m, the `max_D` of that fit, because the likelihood is shallow at broad scales; in a paper you would extend `max_D` until the upper limit is inside the search window. `radius_90_m` is the distance a reader can picture: the radius of the circle around a camera that holds 90% of the kernel weight (the 2D distance from Block 1), or the radius itself for a hard-radius covariate. `multiplier` is the factor by which the expected response changes per SD of the covariate. Profile intervals need the fit's kernel inputs. The Block 2 fits keep them, so this table works from the checkpoint after a restart. The lightened Block 3 fits do not, so profile those in the session where you fit them, before saving.
+
+When you write up a multiscale analysis, report:
+
+- the kernel (Gaussian here), `max_D`, and how you chose it;
+- each scale with its profile interval, and a distance readers can picture, labeled by definition (the 2D radius holding 90% of the kernel weight, or the 1D distance along a line);
+- the effect on the response scale, per SD or per meaningful unit;
+- whether any estimate reached a boundary, and what you did about it (screened starts, a larger `max_D`);
+- the profile plots, at least in a supplement;
+- how you screened correlated landscape metrics, and the model comparison table.
+
+# Same workflow, different model: occupancy {#sec-occupancy}
+
+`multiScale_optim()` works with any model that can be refit with new covariate values, including `unmarked` hierarchical models. Here we treat each camera-week as a survey and fit a single-season occupancy model for cats, with urbanization on occupancy and constant detection.
+
+```{r}
+#| label: occu
+ki_occ <- kernel_prep(cam_sf, urb, max_D = 1000, kernel = "gaussian",
+                      store_cell_data = FALSE, verbose = FALSE)
+y_cat <- (summer[, , which(species$code == "cat")] > 0) * 1   # 207 x 18 detection histories (NA kept)
+umf_cat <- unmarkedFrameOccu(y = y_cat, siteCovs = ki_occ$kernel_dat)
+
+occ_cat <- occu(~ 1 ~ urb_pca, data = umf_cat)
+opt_occ_cat <- multiScale_optim(occ_cat, ki_occ)
+summary(opt_occ_cat)$opt_scale
+```
+
+```{r}
+#| label: occu-coef
+coef(opt_occ_cat$opt_mod)
+plogis(coef(opt_occ_cat$opt_mod)[c("psi(Int)", "p(Int)")])   # occupancy and detection at average urbanization
+```
+
+**How to read this output:** the occupancy sigma, about 39 m, agrees with the visit-frequency sigma from Block 2. `unmarked` reports coefficients on the logit scale, so back-transform them with `plogis()`: at average urbanization, a camera site is occupied with probability of about 0.43, and a cat present at a site is detected in a given week with probability of about 0.24. Each SD of urbanization raises the log-odds of occupancy by about 0.6.
+
+`multiScaleR` also supports `lm()` and `glm()`, `glmmTMB`, `lme4`, `pscl::zeroinfl()`, `nlme::gls()` with spatial correlation, conditional logistic regression for step-selection functions, and other `unmarked` models such as N-mixture models. See `vignette("multiScaleR_Guide", package = "multiScaleR")`.
+
+# Your turn {#sec-your-turn}
+
+Use the rest of the block on your own data, or pick a challenge below. The instructors will circulate.
+
+## A template for your own data
+
+```r
+## Points: an sf or SpatVector object in a projected CRS (meters)
+my_pts <- st_read("my_sites.gpkg")               # or st_as_sf(df, coords = c("x", "y"), crs = ...)
+my_rast <- rast("my_landcover.tif")               # same CRS as my_pts
+my_pts <- st_transform(my_pts, crs(my_rast))
+
+## 1. Covariates: start with one kernel mean; add metrics once it works
+my_vars <- msr_vars(
+  forest = kernel_var("my_forest_layer")
+  # , forest_ed = landscape_var("my_landcover_layer", metric = "ed")
+)
+ki <- kernel_prep(my_pts, my_rast, max_D = 2000, kernel = "gaussian", scale_vars = my_vars)
+
+## 2. A starting model with the formula written in the call
+dat <- data.frame(my_response = my_pts$response, ki$kernel_dat)
+mod <- glm(my_response ~ forest, family = binomial(), data = dat)
+
+## 3. Optimize and diagnose
+opt <- multiScale_optim(mod, ki, start_strategy = "screen")
+summary(opt)
+plot(profile_sigma(opt, n_pts = 15))
+```
+
+::: callout-tip
+## Common problems
+
+- **Unprojected coordinates**: `kernel_prep()` needs points and rasters in the same projected CRS, in meters; reproject with `st_transform()` and `terra::project()`.
+- **A layer or covariate named `x`**: `x` is reserved for internal coordinates; rename it.
+- **Sigma at `max_D`**: increase `max_D` and rerun `kernel_prep()`, then check the profile.
+- **Slow landscape metrics**: fit at a few fixed radii first, and test on a subset of points.
+- **Memory**: use `store_cell_data = FALSE` for kernel means, crop rasters to your points plus `max_D`, and check `estimate_multiscale_ram(ki)`.
+:::
+
+## Challenge 1: an edge species
+
+Eastern cottontails are the textbook edge species. Predict the metric and the scale, then fit land-cover edge density (`landscape_var("landcover", metric = "ed")`, `max_D = 1500`) and compare it with mean urbanization using `aic_tab()`. Cottontails were detected at only 47 cameras, so expect wide intervals.
+
+::: {.callout-note collapse="true"}
+## Our result
+
+Edge density at a radius of about 280 m (profile 95% CI 194 to 384 m) beat mean urbanization by about 8.5 AICc, with each SD of edge density multiplying visits by about 3.5. Mean urbanization ran to the 30 m lower boundary. Moll et al. (2020) reported a scale of maximal effect of 41 m for cottontail visits, near the same lower limit.
+:::
+
+## Challenge 2: predict, then test
+
+Moll et al. (2020) estimated raccoon visit frequency to respond to urbanization at about 1.9 km. Before you look, write down your guess. Then fit mean urbanization for raccoon with `max_D = 8000`, `store_cell_data = FALSE`, and `start_strategy = "screen"` (preparation takes about 30 s and, as for the chipmunk, about 2 GB of free memory), and profile the result.
+
+::: {.callout-note collapse="true"}
+## Our result
+
+Sigma was about 1860 m (SE 770 m), with a clear interior minimum in the profile and a positive effect of urbanization. The two analyses, with different models and software, landed within 70 m of each other.
+:::
+
+## Challenge 3: does the scale change with season?
+
+The winter data (December to April, 104 cameras) are in `data/winter_counts.rds` and the `winter` sheet of `camera_locations.xlsx`. Build a `site_data`-style table for winter, then fit cat and deer. Remember that winter cameras ran up to 22 weeks.
+
+```r
+wcams  <- read_excel(file.path(DATA_DIR, "camera_locations.xlsx"), sheet = "winter")
+w_sf   <- st_transform(st_as_sf(wcams, coords = c("longitude", "latitude"), crs = 4326), crs(urb))
+winter <- readRDS(file.path(DATA_DIR, "winter_counts.rds"))           # 104 x 22 x 14
+w_weeks <- apply(winter[, , 1], 1, function(r) sum(!is.na(r)))
+w_deer  <- rowSums(winter[, , 4], na.rm = TRUE)
+```
+
+::: {.callout-note collapse="true"}
+## Our result
+
+Cats stayed local in winter (sigma at the 30 m lower bound). Deer ran to the edge of a 3 km window, much broader than in summer; try a larger `max_D`. Moll et al. (2020) likewise found deer responding at 2.5 km in winter versus 0.65 km in summer.
+:::
+
+# Summary {#sec-summary}
+
+1. **Scales differ among species, even for one covariate.** Cats respond to urbanization within about 60 m, deer within about 750 m, and chipmunk data cannot place a scale at all.
+2. **Diagnose before you interpret.** The sigma profile separates a well-defined scale from a boundary or a flat surface; screened starts and a larger `max_D` resolve most boundary problems, and a flat profile is a reportable result.
+3. **"How much" is not the only question.** Landscape metrics (opossum and edge density) and surface metrics (deer and roughness) each carry their own scale and can beat a kernel mean decisively.
+4. **Screen metrics before you compare them.** Many landscape metrics are near duplicates; pick one per idea and report intervals from the profile likelihood for hard radii.
+5. **Check the map.** Clamping limits extrapolation in covariate space, but only ecological judgment catches a model that fits the data and maps the wrong place.
+
+## Not covered today
+
+- Exponential (`"exp"`), exponential power (`"expow"`), and fixed-buffer (`"fixed"`) kernels
+- Surface skewness, kurtosis, slope, and surface-area metrics (`ssk`, `sku`, `sdq`, `sdr`) for terrain and canopy height
+- `kernel_prep_by_group()` (new in 0.7.1) for observations matched to year-specific rasters
+- Mixed, zero-inflated, and spatially correlated models; `bic_tab()`; simulation with `sim_rast()` and `sim_dat()`
+- Memory planning with `estimate_multiscale_ram()`
+
+## Resources
+
+- `multiScaleR` on CRAN and GitHub: <https://github.com/wpeterman/multiScaleR>
+- Vignettes: `vignette(package = "multiScaleR")`, including the quick start, the full guide, landscape metric covariates, surface metric covariates, spatial projection and clamping, and year-specific rasters
+- Workshop materials: <https://github.com/wpeterman/multiScaleR_Workshop>
+
+# Quick reference {#sec-quickref}
+
+```r
+## Project a fitted model (kernel, landscape, or surface covariates)
+layers <- kernel_scale.raster(crop(urb, pred_ext), multiScaleR = opt,
+                              scale_center = TRUE,     # standardize like the model data
+                              clamp = TRUE,            # stay within the cameras' range
+                              offset_values = c(n_weeks = 1))   # per-week predictions
+pred <- predict(layers, opt$opt_mod, type = "response")
+
+## Report
+summary(opt, profile = TRUE)       # scale with profile interval
+exp(coef(opt$opt_mod))             # multiplicative effects per SD
+
+## Occupancy with unmarked
+umf <- unmarkedFrameOccu(y = detections, siteCovs = ki$kernel_dat)
+opt_occ <- multiScale_optim(occu(~ 1 ~ urb_pca, data = umf), ki)
+plogis(coef(opt_occ$opt_mod))      # back-transform from the logit scale
+```
+
+| Function | Purpose |
+|----------|---------|
+| `kernel_scale.raster()` | Apply fitted kernels, metrics, and offsets to rasters for prediction |
+| `terra::predict()` | Predict the fitted model across the projected layers |
+| `summary(x, profile = TRUE)` | Profile-likelihood intervals for sigma or radius |
+| `multiScale_optim()` | Works with `unmarked`, `glmmTMB`, `zeroinfl()`, `gls()`, and more |
+
+See also `vignette("spatial_projection_clamping", package = "multiScaleR")`.
+
+# References {.unnumbered}
+
+Moll, R. J., J. D. Cepek, P. D. Lorch, P. M. Dennis, T. Robison, and R. A. Montgomery. 2020. At what spatial scale(s) do mammals respond to urbanization? *Ecography* 43:171-183. <https://doi.org/10.1111/ecog.04762>
+
+Peterman, W. E. 2026. multiScaleR: a generalizable approach for multiscale ecological modeling and scale of effect estimation. *Landscape Ecology* 41:8. <https://doi.org/10.1007/s10980-025-02267-x>
