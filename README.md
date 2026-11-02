@@ -20,6 +20,8 @@ A half-day, hands-on workshop on estimating species-specific scales of effect wi
 | 11:00 to 11:45 | 4. Maps, other models, your data | `04_maps_models_your_data.qmd` | Projection and clamping; occupancy; open work |
 | 11:45 to 12:00 | Open discussion | | Questions and one-on-one help |
 
+The slides from the opening lecture are in `TWS_WorkShopScaleSlides_2026.pdf`.
+
 ---
 
 ## Before the workshop
@@ -72,6 +74,7 @@ multiScaleR_Workshop/
 ├── 02_core_workflow.qmd             # Block 2
 ├── 03_landscape_pattern.qmd         # Block 3
 ├── 04_maps_models_your_data.qmd     # Block 4
+├── TWS_WorkShopScaleSlides_2026.pdf # lecture slides (PDF)
 ├── Moll_et_al_2020_Ecography.pdf    # source paper (open access)
 ├── data/
 │   ├── camera_locations.xlsx        # camera coordinates (summer and winter sheets)
